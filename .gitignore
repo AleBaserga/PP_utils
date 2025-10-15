@@ -1,0 +1,32 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.pyo
+
+# Environments
+.venv/
+venv/
+env/
+*.env
+
+# Build/output
+build/
+dist/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Spyder project settings
+.spyproject/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data (customize to your repo!)
+data/raw/
+data/interim/
+outputs/
+EOF
