@@ -1,32 +1,58 @@
-# Byte-compiled / caches
+# --- PYTHON CACHE / BYTECODE ---
 __pycache__/
 *.py[cod]
-*.egg-info/
-*.pyo
+*$py.class
 
-# Environments
-.venv/
+# --- VIRTUAL ENVIRONMENTS ---
 venv/
 env/
-*.env
+.venv/
+.env/
+conda_env/
+*.conda
+*.egg-info/
+.eggs/
 
-# Build/output
-build/
-dist/
-*.log
-
-# Jupyter
+# --- SPYDER / JUPYTER ---
+.spyproject/
+.spyderproject
 .ipynb_checkpoints/
 
-# Spyder project settings
-.spyproject/
-
-# OS files
+# --- SYSTEM / OS FILES ---
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Data (customize to your repo!)
-data/raw/
-data/interim/
+# --- LOGS / TEMP FILES ---
+*.log
+*.tmp
+*.bak
+
+# --- BUILD / DIST / PACKAGING ---
+build/
+dist/
+*.egg
+*.manifest
+*.spec
+
+# --- ENVIRONMENT FILES ---
+.env
+*.env
+
+# --- PYTEST / COVERAGE ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- MISC / IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- CUSTOM: DATA OR OUTPUT FOLDERS ---
+# Add any data/output folders you don’t want to track, e.g.:
+data/
 outputs/
-EOF
+results/
+figures/
