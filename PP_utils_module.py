@@ -9,9 +9,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+from scipy.ndimage import uniform_filter
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
+    """
+    TODO: fix this description
+    """
     df = pd.read_csv(loadPath, sep=sep, header=None, decimal=decimal)
     
     if transpose_dataset:
@@ -20,6 +24,10 @@ def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
     return df
 
 def unpack_df(dataframe):
+    """
+    TODO: fix this description
+    """
+    
     df_np = dataframe.to_numpy()
     wl = df_np[1:,0]
     t = df_np[0, 1:]
@@ -27,6 +35,10 @@ def unpack_df(dataframe):
     return t, wl, map_data
 
 def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="\t"):
+    """
+    TODO: fix this description
+    """
+    
     df = load_as_df(loadPath, transpose_dataset = True, decimal=",")
 
     # Unpack Dataframe
@@ -39,10 +51,17 @@ def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="
 
 # Miscellaneous Useful Functions
 def find_in_vector(vect, value):
+    """
+    TODO: fix this description
+    """
+    
     index = np.argmin(np.abs(vect-value))
     return index
 
 def find_in_vector_multiple(vect, values):
+    """
+    TODO: fix this description
+    """
     
     indexs = []
     if isinstance(values, int):
@@ -56,8 +75,38 @@ def find_in_vector_multiple(vect, values):
             
     return indexs
 
-def find_abs_max(vect):
+def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
+    """
+    Smooth a 2D NumPy array along both dimensions using a uniform moving average.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Input 2D matrix (shape n×m).
+    p : int
+        Smoothing radius (or window size) along axis 0 (rows).
+    r : int
+        Smoothing radius (or window size) along axis 1 (columns).
+
+    Returns
+    -------
+    smoothed : np.ndarray
+        Smoothed 2D array of the same shape as input.
+    """
+    if array.ndim != 2:
+        raise ValueError("Input array must be 2D.")
+
+    # Ensure window sizes are odd so the filter is centered
+    size = (max(1, 2*p+1), max(1, 2*r+1))
     
+    smoothed = uniform_filter(array, size=size, mode="reflect")
+    return smoothed
+
+
+def find_abs_max(vect):
+    """
+    TODO: fix this description
+    """
     abs_vect = np.abs(vect)
     i_max = np.argmax(abs_vect)
     
@@ -66,15 +115,24 @@ def find_abs_max(vect):
 
 # Data extraction and manipulation
 
-def extract_spectr(t, map_matrix, values_to_extract):
+def extract_spectra(t, map_matrix, values_to_extract):
+    """
+    TODO: fix this description
+    """
     index_extract = find_in_vector_multiple(t, values_to_extract)
-    return map_matrix[index_extract, :], index_extract
-
-def extract_dyn(wl_array, map_matrix, values_to_extract):
-    index_extract = find_in_vector(wl_array, values_to_extract)
     return map_matrix[:, index_extract], index_extract
 
+def extract_dyns(wl_array, map_matrix, values_to_extract):
+    """
+    TODO: fix this description
+    """
+    index_extract = find_in_vector_multiple(wl_array, values_to_extract)
+    return map_matrix[index_extract, :], index_extract
+
 def cut_spectra(wl, map_mat, wl_lims):
+    """
+    TODO: fix this description
+    """
     wl_lims = np.sort(wl_lims)
     idx_min = find_in_vector(wl, wl_lims[0])
     idx_max = find_in_vector(wl, wl_lims[1])
@@ -86,13 +144,15 @@ def cut_spectra(wl, map_mat, wl_lims):
     return wl_cut, map_cut
 
 def find_abs_max_spectra(t, wl, map_mat, t_find):
-    
-    spectra, i_taken = extract_spectr(t, map_mat, t_find)
+    """
+    TODO: fix this description
+    """
+    spectra, i_taken = extract_spectra(t, map_mat, t_find)
     index_maximas = []
     values_maximas = []
     
-    for i in range(spectra.shape[0]):
-        spectrum = spectra[i,:]
+    for i in range(spectra.shape[1]):
+        spectrum = spectra[:,i]
         i_m, v_m = find_abs_max(spectrum)
         
         index_maximas.append(i_m)
@@ -101,6 +161,9 @@ def find_abs_max_spectra(t, wl, map_mat, t_find):
     return index_maximas, values_maximas, i_taken
 
 def remove_bkg(t, map_local, t_bkg):
+    """
+    TODO: fix this description
+    """
     
     i_bkg = find_in_vector(t, t_bkg)
     
@@ -115,26 +178,59 @@ def remove_bkg(t, map_local, t_bkg):
 # Plotting functions 
 
 def plot_spectra(t, wl, map_mat, ts):
+    """
+    TODO: fix this description
+    """
     
-    spectra, i_taken = extract_spectr(t, map_mat, ts)
+    spectra, i_taken = extract_spectra(t, map_mat, ts)
     
-    colors = create_diverging_colormap(spectra.shape[0], 'plasma')
+    colors = create_diverging_colormap(spectra.shape[1], 'plasma')
     
     fig, ax = plt.subplots(1, 1, figsize=(8,3))
     
-    for i in range(spectra.shape[0]):
-        spectrum = spectra[i,:]
+    for i in range(spectra.shape[1]):
+        spectrum = spectra[:, i]
         t_c = t[i_taken[i]]
-        ax.plot(wl, spectrum, label = f' {t_c} ps', color = colors[i])
+        ax.plot(wl, spectrum, label = f' {t_c:.2f} ps', color = colors[i])
         
-    ax.set_xlabel("Lunghezza d'onda (nm)")
-    ax.set_ylabel("Intensità")
+    ax.set_xlabel("Wavelength (nm)")
+    ax.set_ylabel("dTT (a.u.)")
+    
+    ax.set_xlim([min(wl), max(wl)])
     ax.legend()
-    #ax.set_title("Spettro al tempo 12.5 s")
+    
+    plt.show()
+    return fig, ax
+
+def plot_dynamics(t, wl, map_mat, wls):
+    """
+    TODO: fix this description
+    """
+    
+    dynamics, i_taken = extract_dyns(wl, map_mat, wls)
+    
+    colors = create_diverging_colormap(dynamics.shape[0], 'plasma')
+    
+    fig, ax = plt.subplots(1, 1, figsize=(8,3))
+    
+    for i in range(dynamics.shape[0]):
+        dynamic = dynamics[i, :]
+        wl_c = wl[i_taken[i]]
+        ax.plot(t, dynamic, label = f' {wl_c:.2f} nm', color = colors[i])
+        
+    ax.set_xlabel("Delay (fs)")
+    ax.set_ylabel("dTT (a.u.)")
+    
+    ax.set_xlim([min(t), max(t)])
+    ax.legend()
+    
     plt.show()
     return fig, ax
 
 def plot_map(t, wl, map_mat):
+    """
+    TODO: fix this description
+    """
     
     fig, ax = plt.subplots(1, 1)
     c = ax.pcolormesh(t, wl, map_mat, shading="auto", cmap = "turbo", vmin = -0.005, vmax = 0.005)
@@ -166,8 +262,11 @@ def create_diverging_colormap(n_colors: int, cmap_name: str = 'coolwarm'):
     cmap = plt.get_cmap(cmap_name)
     return [cmap(i / (n_colors - 1)) for i in range(n_colors)]
 
+# deprecated
 def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):
-    
+    """
+    TODO: fix this description
+    """
     shape_res = (len(file_path_vector), len(t_to_find))
     index_maximas_mat = np.zeros(shape_res, dtype=np.float64)
     values_maximas_mat = np.zeros_like(index_maximas_mat, dtype=np.float64)
@@ -202,7 +301,8 @@ def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):
         i_taken_mat[i, :] = i_taken
         
     return index_maximas_mat, values_maximas_mat, i_taken_mat
-    
+
+# deprecated    
 def find_abs_max_dyn_multiple_files(file_path_vector, wl_l, t_to_find_peak):
     
     file_path = file_path_vector[0]
@@ -269,7 +369,33 @@ class PP_data:
         self.t = np.asarray(t, dtype=float)
         self.wl = np.asarray(wl, dtype=float)
         self.map = np.asarray(map_data, dtype=float)
-
+    
+    def extract_dyns_class(self, wls):
+        
+        wl = self.wl
+        t = self.t
+        map_data = self.map
+        
+        return extract_dyns(wl, map_data, wls)
+    
+    def extract_spectra_class(self, tc):
+        
+        wl = self.wl
+        t = self.t
+        map_data = self.map
+        
+        return extract_spectra(t, map_data, tc)
+        
+    def smooth_2d_class(self, p: int, r: int):
+        wl = self.wl
+        t = self.t
+        map_data = self.map
+        
+        smooth_map = smooth_2d(map_data, p, r)
+        
+        return PP_data(t, wl, smooth_map)
+    
+        
     def cut_spectra_class(self, wl_lims):
         """
         Cut wavelength and map data between wavelength limits.
@@ -291,8 +417,7 @@ class PP_data:
         
         wl_cut, map_cut = cut_spectra(wl, map_data, wl_lims)
         
-        cutted_data = PP_data(self.t, wl_cut, map_cut)
-        return cutted_data
+        return PP_data(self.t, wl_cut, map_cut)
     
     def remove_bkg_class(self, t_bkg):
         """
@@ -320,7 +445,29 @@ class PP_data:
         data_bkg_free = PP_data(t, wl, map_bkg_free)
         
         return data_bkg_free
+        
+    def plot_spectra_class(self, TS):
+        """
+        TODO: fix this description
+        """
+        
+        wl = self.wl
+        t = self.t
+        map_data = self.map
+        
+        return plot_spectra(t, wl, map_data, TS)
     
+    def plot_dynamics_class(self, wls):
+        """
+        TODO: fix this description
+        """
+        
+        wl = self.wl
+        t = self.t
+        map_data = self.map
+        
+        return plot_dynamics(t, wl, map_data, wls)
+
     def plot_map_class(self):
         """
         TODO: fix this description
@@ -330,9 +477,8 @@ class PP_data:
         t = self.t
         map_data = self.map
         
-        fig, ax, c = plot_map(t, wl, map_data)
-        
-        return fig, ax, c
+        return plot_map(t, wl, map_data)
 
+        
     def __repr__(self):
         return f"PP_data(t={self.t.shape}, wl={self.wl.shape}, map={self.map.shape})"
