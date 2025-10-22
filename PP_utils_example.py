@@ -53,6 +53,7 @@ data_bkg_free = data_cut.remove_bkg_class(t_bkg)
 
 # smooting
 map_cut_2 = utilsPP.smooth_2d(map_cut_2, 3, 2)
+#map_cut_2, k, s = utilsPP.svd_denoise(map_cut_2)
 
 # plot maps
 fig, ax, c = utilsPP.plot_map(t, wl_cut, map_cut_2)

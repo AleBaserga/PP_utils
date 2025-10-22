@@ -23,7 +23,7 @@ def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
         
     return df
 
-def unpack_df(dataframe):
+def unpack_df(dataframe, makePercentage=True):
     """
     TODO: fix this description
     """
@@ -32,9 +32,13 @@ def unpack_df(dataframe):
     wl = df_np[1:,0]
     t = df_np[0, 1:]
     map_data = df_np[1:, 1:]
+    
+    if makePercentage:
+        map_data = map_data * 100
+        
     return t, wl, map_data
 
-def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="\t"):
+def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="\t",  makePercentage=True):
     """
     TODO: fix this description
     """
@@ -42,7 +46,7 @@ def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="
     df = load_as_df(loadPath, transpose_dataset = True, decimal=",")
 
     # Unpack Dataframe
-    t, wl, map_data = unpack_df(df)
+    t, wl, map_data = unpack_df(df, makePercentage)
     
     if asClass:
         return PP_data(t, wl, map_data)
@@ -75,6 +79,17 @@ def find_in_vector_multiple(vect, values):
             
     return indexs
 
+def find_abs_max(vect):
+    """
+    TODO: fix this description
+    """
+    abs_vect = np.abs(vect)
+    i_max = np.argmax(abs_vect)
+    
+    return i_max, vect[i_max]
+
+# Denoising 
+
 def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     """
     Smooth a 2D NumPy array along both dimensions using a uniform moving average.
@@ -103,14 +118,113 @@ def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     return smoothed
 
 
-def find_abs_max(vect):
+def _choose_rank_from_singulars(s, method="energy", energy=0.99, tol=1e-2):
     """
-    TODO: fix this description
+    Decide rank from singular values s (1D array, descending).
     """
-    abs_vect = np.abs(vect)
-    i_max = np.argmax(abs_vect)
-    
-    return i_max, vect[i_max]
+    s = np.asarray(s, dtype=float)
+    if s.size == 0:
+        return 0
+
+    if method == "energy":
+        # cumulative energy fraction
+        energy_s = np.cumsum(s**2) / np.sum(s**2)
+        k = np.searchsorted(energy_s, energy) + 1  # +1 because searchsorted returns index where energy_s[idx] >= energy
+        k = max(1, min(k, s.size))
+        return int(k)
+
+    if method == "threshold":
+        smax = s[0]
+        keep = np.where(s >= tol * smax)[0]
+        if keep.size == 0:
+            return 1
+        return int(keep.size)
+
+    if method == "gap":
+        # Find largest relative drop in log singular values
+        # Avoid zeros by adding small epsilon
+        eps = np.finfo(float).eps
+        logs = np.log(s + eps)
+        diffs = -np.diff(logs)  # positive if drop
+        if diffs.size == 0:
+            return 1
+        idx = np.argmax(diffs)  # cut after this index
+        k = idx + 1
+        k = max(1, min(k, s.size))
+        return int(k)
+
+    raise ValueError(f"Unknown rank selection method: {method}")
+
+
+def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, return_uv=False):
+    """
+    SVD denoising (rank truncation) of a 2D matrix.
+
+    Parameters
+    ----------
+    matrix : array-like, shape (n, m)
+        Input 2D array (real or complex).
+    rank : int or None, optional
+        Number of singular values to keep. If None (default), auto-select using `method`.
+    method : {"energy", "threshold", "gap"}, optional
+        If rank is None, strategy to pick rank:
+          - "energy": keep smallest k with cumulative energy >= `energy`.
+          - "threshold": keep singular values >= tol * s_max.
+          - "gap": choose elbow by largest drop in log singular values.
+        Default: "energy".
+    energy : float in (0,1), optional
+        Energy fraction for "energy" method. Default 0.99.
+    tol : float, optional
+        Relative threshold for "threshold" method (default 1e-2).
+    return_uv : bool, optional
+        If True return (denoised, chosen_rank, s, U, Vh), else return (denoised, chosen_rank, s).
+
+    Returns
+    -------
+    denoised : ndarray, shape (n, m)
+        Reconstructed matrix after keeping only `rank` singular values.
+    chosen_rank : int
+        The integer rank used.
+    s : ndarray
+        Singular values (descending).
+    (optionally) U, Vh : arrays returned when return_uv=True.
+
+    Notes
+    -----
+    - Uses economy SVD (np.linalg.svd with full_matrices=False).
+    - Works with real or complex-valued matrices.
+    - Default automatic strategy ('energy' with energy=0.99) is a reasonable default for denoising.
+    """
+    A = np.asarray(matrix)
+    if A.ndim != 2:
+        raise ValueError("Input `matrix` must be 2D")
+
+    # economy SVD
+    U, s, Vh = np.linalg.svd(A, full_matrices=False)  # U: (n,k), s: (k,), Vh: (k,m)
+
+    # choose rank
+    if rank is None:
+        chosen_rank = _choose_rank_from_singulars(s, method=method, energy=energy, tol=tol)
+    else:
+        chosen_rank = int(rank)
+        if chosen_rank < 1:
+            chosen_rank = 1
+        chosen_rank = min(chosen_rank, s.size)
+
+    # reconstruct using truncated SVD
+    # build S_k as diagonal of top-k singulars
+    k = chosen_rank
+    Uk = U[:, :k]
+    sk = s[:k]
+    Vhk = Vh[:k, :]
+
+    # efficient reconstruction: Uk * diag(sk) * Vhk
+    # compute Uk * diag(sk) using broadcasting
+    denoised = (Uk * sk[np.newaxis, :]) @ Vhk
+
+    if return_uv:
+        return denoised, chosen_rank, s, U, Vh
+    return denoised, chosen_rank, s
 
 
 # Data extraction and manipulation
@@ -194,7 +308,7 @@ def plot_spectra(t, wl, map_mat, ts):
         ax.plot(wl, spectrum, label = f' {t_c:.2f} ps', color = colors[i])
         
     ax.set_xlabel("Wavelength (nm)")
-    ax.set_ylabel("dTT (a.u.)")
+    ax.set_ylabel("dTT (%)")
     
     ax.set_xlim([min(wl), max(wl)])
     ax.legend()
@@ -219,7 +333,7 @@ def plot_dynamics(t, wl, map_mat, wls):
         ax.plot(t, dynamic, label = f' {wl_c:.2f} nm', color = colors[i])
         
     ax.set_xlabel("Delay (fs)")
-    ax.set_ylabel("dTT (a.u.)")
+    ax.set_ylabel("dTT (%)")
     
     ax.set_xlim([min(t), max(t)])
     ax.legend()
@@ -227,13 +341,34 @@ def plot_dynamics(t, wl, map_mat, wls):
     plt.show()
     return fig, ax
 
-def plot_map(t, wl, map_mat):
+def compute_clims_auto(matrix):
+    """
+    TODO: fix this description
+    """
+    vmax = np.nanmax(np.abs(matrix)) * 0.9
+    vmin = -vmax
+    return vmin, vmax
+
+def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto"):
     """
     TODO: fix this description
     """
     
+    # Handle color limits
+    if isinstance(clims, str) and clims.lower() == "auto":
+        # --- AUTO MODE ---
+        # Example: use ±0.6 × max(abs(values))
+        vmin_use, vmax_use = compute_clims_auto(map_mat)
+    else:
+        # --- MANUAL MODE ---
+        clims = np.asarray(clims).flatten()
+        if clims.size != 2:
+            raise ValueError("clims must be 'auto' or a sequence of two numbers [vmin, vmax].")
+
+        vmin_use, vmax_use = np.sort(clims)  # ensure vmin < vmax
+    
     fig, ax = plt.subplots(1, 1)
-    c = ax.pcolormesh(t, wl, map_mat, shading="auto", cmap = "turbo", vmin = -0.005, vmax = 0.005)
+    c = ax.pcolormesh(t, wl, map_mat, shading="auto", cmap = cmap_use, vmin = vmin_use, vmax = vmax_use)
     
     cb = plt.colorbar(c, ax=ax)
     cb.set_label("dTT")
@@ -468,7 +603,7 @@ class PP_data:
         
         return plot_dynamics(t, wl, map_data, wls)
 
-    def plot_map_class(self):
+    def plot_map_class(self, cmap_use = "PuOr_r", clims = "auto"):
         """
         TODO: fix this description
         """
@@ -477,7 +612,7 @@ class PP_data:
         t = self.t
         map_data = self.map
         
-        return plot_map(t, wl, map_data)
+        return plot_map(t, wl, map_data, cmap_use, clims)
 
         
     def __repr__(self):
