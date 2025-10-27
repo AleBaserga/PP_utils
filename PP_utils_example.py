@@ -72,6 +72,14 @@ wls_to_plot = [510, 530, 580]
 fig, ax = utilsPP.plot_dynamics(t, wl_cut, map_cut_2, wls_to_plot)
 fig, ax = data_bkg_free.plot_dynamics_class(wls_to_plot)
 
+# plot lin-log
+fig, (ax_lin, ax_log), (c_lin, c_log) = utilsPP.plot_map_linear_log(
+    t, wl_cut, map_cut_2,
+    t_split=5000,          # split between linear and log region
+    cmap_use="PuOr_r",
+    clims="auto"
+)
+
 
 #%% Extract Spectrum and maximas
 ts = [1.5, 10, 20]
@@ -93,3 +101,32 @@ for i in range(len(index_maximas)):
     ax.axhline(y=v_m, color = colors[i], linestyle='-', linewidth=2, label=f"V_max {t_n} ps")
     
     ax.legend([f"V_max {t[i_taken[i]]} ps" for i in range(len(index_maximas))])
+
+#%% track maximumx
+
+max_vals, wl_max, idxs, t_out = utilsPP.track_maxima_fulltimeline(
+    wl_cut, t, map_cut,
+    wl_search=[520, 540],
+    t_start=1000,   # pick seed near t=100
+    t_stop=60,   # t_stop earlier than t_start
+    maxSteps=6
+)
+
+# plot dynamics
+fig, ax = plt.subplots(1, 1, figsize=(8,3))
+ax.plot(t, max_vals, label = "Max signal", color = "red")
+ax.set_xlabel("Delay (fs)")
+ax.set_ylabel("dTT (%)")
+
+# assuming wl, t, map_data are defined and track_maxima_fulltimeline is loaded:
+fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
+    wl_cut, t, map_cut,
+    wl_search=[520, 540],
+    t_start=1000,   # pick seed near t=100
+    t_stop=500,   # t_stop earlier than t_start
+    maxSteps=6,
+    show_map=True, cmap='PuOr_r', figsize=(10,6),
+    title='Tracked wavelength vs time'
+)
+plt.show()
+

@@ -62,6 +62,10 @@ def find_in_vector(vect, value):
     index = np.argmin(np.abs(vect-value))
     return index
 
+def _find_nearest_index(vec, value):
+    vec = np.asarray(vec)
+    return int(np.argmin(np.abs(vec - value)))
+
 def find_in_vector_multiple(vect, values):
     """
     TODO: fix this description
@@ -289,6 +293,130 @@ def remove_bkg(t, map_local, t_bkg):
     
     return map_bkg_free
 
+def track_maxima_fulltimeline(wl, t, map_data, wl_search, t_start, t_stop, maxSteps=np.inf):
+    """
+    Track maxima across the entire time vector using a seed at t_start.
+
+    Behaviour:
+      - Seed: find the absolute-maximum within wl_search at the time nearest t_start.
+      - Propagate forward from t_start to the end (increasing indices).
+      - Propagate backward from t_start down to t_stop (decreasing indices).
+      - For times before t_stop, values are fixed to the value at t_stop.
+      - maxSteps limits how many wavelength indices the chosen maximum may move
+        between consecutive time steps. Default np.inf (no limit).
+
+    Parameters
+    ----------
+    wl : 1D array (m,)
+        Wavelength axis.
+    t : 1D array (n,)
+        Time axis.
+    map_data : 2D array (m, n)
+        Data matrix (wavelength × time).
+    wl_search : sequence of two floats
+        [wl_min, wl_max] search window (values in same units as wl).
+    t_start : float
+        Time value used to pick the seed maximum.
+    t_stop : float
+        Time value; for t < t_stop returned values are fixed to those at t_stop.
+        Must satisfy t_stop <= t_start (they may be equal).
+    maxSteps : int or float (optional)
+        Max allowed jump in wavelength index between adjacent times. Default np.inf.
+
+    Returns
+    -------
+    max_dynamics : ndarray (n,)
+        Data values at the tracked maxima (signed).
+    wl_maximum : ndarray (n,)
+        Wavelength values at the tracked maxima.
+    max_index : ndarray (n,)
+        Integer indices into wl for the tracked maxima.
+    t_out : ndarray (n,)
+        Same as input t (returned for convenience).
+    """
+    wl = np.asarray(wl)
+    t = np.asarray(t)
+    map_data = np.asarray(map_data)
+
+    if map_data.shape != (wl.size, t.size):
+        raise ValueError(f"map_data shape {map_data.shape} must be (len(wl), len(t)) = {(wl.size, t.size)}")
+
+    # resolve wl search window to indices (inclusive)
+    wl0, wl1 = sorted(wl_search)
+    idx_w0 = _find_nearest_index(wl, wl0)
+    idx_w1 = _find_nearest_index(wl, wl1)
+    wmin_idx, wmax_idx = min(idx_w0, idx_w1), max(idx_w0, idx_w1)
+
+    # time indices
+    idx_t_start = _find_nearest_index(t, t_start)
+    idx_t_stop = _find_nearest_index(t, t_stop)
+    if idx_t_stop > idx_t_start:
+        raise ValueError("t_stop must be earlier (smaller) or equal to t_start")
+
+    n_t = t.size
+    max_index = np.empty(n_t, dtype=int)
+    max_vals = np.empty(n_t, dtype=float)
+
+    # 1) Seed at t_start (raw argmax inside wl window)
+    rel = int(np.argmax(np.abs(map_data[wmin_idx:wmax_idx+1, idx_t_start])))
+    seed_idx = wmin_idx + rel
+    max_index[idx_t_start] = seed_idx
+    max_vals[idx_t_start] = map_data[seed_idx, idx_t_start]
+
+    # Helper to choose next index given prev_idx and raw argmax idx (raw within full wl window)
+    def _choose_index_with_constraint(prev_idx, raw_idx, allowed_min, allowed_max):
+        """Return chosen index respecting allowed range around prev_idx."""
+        if np.isfinite(maxSteps):
+            allowed_min2 = max(allowed_min, prev_idx - int(maxSteps))
+            allowed_max2 = min(allowed_max, prev_idx + int(maxSteps))
+            if raw_idx < allowed_min2 or raw_idx > allowed_max2:
+                # restrict search to [allowed_min2, allowed_max2]
+                sub = np.abs(map_data[allowed_min2:allowed_max2+1, current_t])
+                if sub.size == 0:
+                    return prev_idx
+                rel_sub = int(np.argmax(sub))
+                return allowed_min2 + rel_sub
+            else:
+                return raw_idx
+        else:
+            return raw_idx
+
+    # 2) Propagate forward from t_start+1 to end
+    prev_idx = seed_idx
+    for current_t in range(idx_t_start + 1, n_t):
+        window = np.abs(map_data[wmin_idx:wmax_idx+1, current_t])
+        raw_rel = int(np.argmax(window))
+        raw_idx = wmin_idx + raw_rel
+        chosen = _choose_index_with_constraint(prev_idx, raw_idx, wmin_idx, wmax_idx)
+        max_index[current_t] = chosen
+        max_vals[current_t] = map_data[chosen, current_t]
+        prev_idx = chosen
+
+    # 3) Propagate backward from t_start-1 down to t_stop
+    prev_idx = seed_idx
+    for current_t in range(idx_t_start - 1, idx_t_stop - 1, -1):
+        window = np.abs(map_data[wmin_idx:wmax_idx+1, current_t])
+        raw_rel = int(np.argmax(window))
+        raw_idx = wmin_idx + raw_rel
+        chosen = _choose_index_with_constraint(prev_idx, raw_idx, wmin_idx, wmax_idx)
+        max_index[current_t] = chosen
+        max_vals[current_t] = map_data[chosen, current_t]
+        prev_idx = chosen
+
+    # 4) For times earlier than t_stop (indices 0 .. idx_t_stop-1) fix to value at idx_t_stop
+    if idx_t_stop > 0:
+        # ensure idx_t_stop entry is filled (it is, from step 3 if idx_t_stop <= idx_t_start,
+        # but if idx_t_stop == idx_t_start it was already set)
+        fixed_idx = max_index[idx_t_stop]
+        fixed_val = max_vals[idx_t_stop]
+        max_index[:idx_t_stop] = fixed_idx
+        max_vals[:idx_t_stop] = fixed_val
+
+    # Return arrays (same time order as t)
+    wl_maximum = wl[max_index]
+    return max_vals, wl_maximum, max_index, t
+
+
 # Plotting functions 
 
 def plot_spectra(t, wl, map_mat, ts):
@@ -345,7 +473,7 @@ def compute_clims_auto(matrix):
     """
     TODO: fix this description
     """
-    vmax = np.nanmax(np.abs(matrix)) * 0.9
+    vmax = np.nanmax(np.abs(matrix)) * 0.6
     vmin = -vmax
     return vmin, vmax
 
@@ -396,6 +524,194 @@ def create_diverging_colormap(n_colors: int, cmap_name: str = 'coolwarm'):
     n_colors = n_colors +1
     cmap = plt.get_cmap(cmap_name)
     return [cmap(i / (n_colors - 1)) for i in range(n_colors)]
+
+def plot_tracked_wavelength_vs_time(
+    wl, t, map_data,
+    wl_search, t_start, t_stop, maxSteps=np.inf,
+    show_map=True, cmap='PuOr_r', vmin=None, vmax=None,
+    show_colorbar=True, figsize=(8,6), title=None
+):
+    """
+    Plot the 2D map (wavelength×time) and overlay tracked wavelength vs time.
+
+    Parameters
+    ----------
+    wl : 1D array (m,)
+        Wavelength vector (y axis).
+    t : 1D array (n,)
+        Time vector (x axis).
+    map_data : 2D array (m, n)
+        Data matrix (rows = wl, cols = t).
+    wl_search, t_start, t_stop, maxSteps :
+        See track_maxima_fulltimeline signature.
+    show_map : bool
+        If True draw the pcolormesh map behind the tracked line.
+    cmap : str
+        Colormap for the map.
+    vmin, vmax : float or None
+        Color limits (if None they are auto-chosen from data).
+    show_colorbar : bool
+        Whether to display colorbar.
+    figsize : tuple
+        Figure size.
+    title : str or None
+        Plot title.
+
+    Returns
+    -------
+    fig, ax, tracked_line, tracked_scatter, cbar
+        Matplotlib handles (cbar may be None if show_colorbar=False).
+    """
+
+    # ensure arrays
+    wl = np.asarray(wl)
+    t = np.asarray(t)
+    map_data = np.asarray(map_data)
+
+    # call the tracker (must be defined/imported already)
+    max_vals, wl_maximum, max_index, t_out = track_maxima_fulltimeline(
+        wl, t, map_data, wl_search, t_start, t_stop, maxSteps=maxSteps
+    )
+
+    # plotting
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    cbar = None
+    if show_map:
+        if vmin is None or vmax is None:
+            # symmetric around zero if data contains negative/positive:
+            absmax = np.nanmax(np.abs(map_data))
+            if vmin is None and vmax is None:
+                vmin = -absmax
+                vmax = absmax
+            elif vmin is None:
+                vmin = -max(absmax, abs(vmax))
+            elif vmax is None:
+                vmax = max(absmax, abs(vmin))
+
+        pcm = ax.pcolormesh(t, wl, map_data, shading='auto', cmap=cmap, vmin=vmin, vmax=vmax)
+        if show_colorbar:
+            cbar = plt.colorbar(pcm, ax=ax)
+            cbar.set_label("map value")
+
+    # overlay the tracked wavelength vs time
+    # make sure t_out is same ordering as t (track function returns t array same as input)
+    tracked_line, = ax.plot(t_out, wl_maximum, '-', color='red', lw=1.6, label='tracked λ(t)')
+    tracked_scatter = ax.scatter(t_out, wl_maximum, color='red', s=20)
+
+    # add optional vertical lines for t_start and t_stop
+    ax.axvline(x=t_start, color='green', linestyle='--', lw=1.0, label='t_start')
+    ax.axvline(x=t_stop, color='blue', linestyle=':', lw=1.0, label='t_stop')
+
+    ax.set_xlabel("Delay (fs)")
+    ax.set_ylabel("Wavelength (nm)")
+    if title is not None:
+        ax.set_title(title)
+
+    # legend (avoid duplicate labels)
+    handles, labels = ax.get_legend_handles_labels()
+    # remove duplicates in order
+    seen = set()
+    uniq = []
+    for h, lab in zip(handles, labels):
+        if lab not in seen:
+            uniq.append(h)
+            seen.add(lab)
+    if uniq:
+        ax.legend(uniq, [h.get_label() for h in uniq])
+
+    #plt.tight_layout()
+    return fig, ax, tracked_line, tracked_scatter, cbar
+
+
+def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"):
+    """
+    Plot a pump-probe 2D map with a linear x-axis on the left
+    and a logarithmic x-axis on the right of a chosen split time.
+
+    Parameters
+    ----------
+    t : np.ndarray
+        1D array of time/delay values (must be strictly increasing, positive on the right).
+    wl : np.ndarray
+        1D array of wavelength values.
+    map_mat : np.ndarray
+        2D data array of shape (len(wl), len(t)).
+    t_split : float
+        Time value at which to split the x-axis between linear and logarithmic scales.
+    cmap_use : str
+        Colormap for the pcolormesh.
+    clims : "auto" or [vmin, vmax]
+        Color limits configuration.
+
+    Returns
+    -------
+    fig, (ax_lin, ax_log), (c_lin, c_log)
+        Figure, axes, and pcolormesh handles.
+    """
+
+    # Handle color limits
+    if isinstance(clims, str) and clims.lower() == "auto":
+        vmin_use, vmax_use = compute_clims_auto(map_mat)
+    else:
+        clims = np.asarray(clims).flatten()
+        if clims.size != 2:
+            raise ValueError("clims must be 'auto' or a sequence of two numbers [vmin, vmax].")
+        vmin_use, vmax_use = np.sort(clims)
+
+    # Split data
+    idx_split = np.searchsorted(t, t_split)
+    t_lin = t[:idx_split]
+    t_log = t[idx_split:]
+
+    map_lin = map_mat[:, :idx_split]
+    map_log = map_mat[:, idx_split:]
+
+    # Create two subplots sharing y-axis
+    fig, (ax_lin, ax_log) = plt.subplots(
+        1, 2, figsize=(10, 5), sharey=True, gridspec_kw={'width_ratios': [2, 2]}
+    )
+
+    # Plot linear region
+    c_lin = ax_lin.pcolormesh(
+        t_lin, wl, map_lin, shading="auto", cmap=cmap_use,
+        vmin=vmin_use, vmax=vmax_use
+    )
+    ax_lin.set_xscale("linear")
+    ax_lin.set_xlabel("Delay (fs)")
+    ax_lin.set_ylabel("Wavelength (nm)")
+    ax_lin.set_title("Linear region")
+
+    # Plot logarithmic region
+    c_log = ax_log.pcolormesh(
+        t_log, wl, map_log, shading="auto", cmap=cmap_use,
+        vmin=vmin_use, vmax=vmax_use
+    )
+    ax_log.set_xscale("log")
+    ax_log.set_xlabel("Delay (fs)")
+    ax_log.set_title("Logarithmic region")
+
+    # Add colorbar shared between both
+    cbar = fig.colorbar(c_lin, ax=[ax_lin, ax_log], orientation="vertical", fraction=0.02, pad=0.04)
+    cbar.set_label("ΔT/T")
+
+    # Visual tweaks
+    ax_lin.spines["right"].set_visible(False)
+    ax_log.spines["left"].set_visible(False)
+    ax_log.yaxis.tick_right()
+    ax_log.yaxis.set_label_position("right")
+
+    # Add diagonal "break" lines between the two axes
+    d = .015
+    kwargs = dict(transform=ax_lin.transAxes, color='k', clip_on=False)
+    ax_lin.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+    ax_lin.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+    kwargs.update(transform=ax_log.transAxes)
+    ax_log.plot((-d, +d), (-d, +d), **kwargs)
+    ax_log.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+
+    #plt.tight_layout()
+    return fig, (ax_lin, ax_log), (c_lin, c_log)
 
 # deprecated
 def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):
@@ -482,6 +798,7 @@ def find_abs_max_dyn_multiple_files(file_path_vector, wl_l, t_to_find_peak):
         i_taken_mat[i, :] = i_max
         
     return dyn_max_mat, i_taken_mat
+
     
 
 #%% let's try to use a call of PP data
