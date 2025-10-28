@@ -408,9 +408,11 @@ def track_maxima_fulltimeline(wl, t, map_data, wl_search, t_start, t_stop, maxSt
         # ensure idx_t_stop entry is filled (it is, from step 3 if idx_t_stop <= idx_t_start,
         # but if idx_t_stop == idx_t_start it was already set)
         fixed_idx = max_index[idx_t_stop]
-        fixed_val = max_vals[idx_t_stop]
-        max_index[:idx_t_stop] = fixed_idx
-        max_vals[:idx_t_stop] = fixed_val
+        for current_t in range(0, idx_t_stop, +1):
+            #fixed_val = max_vals[idx_t_stop]
+            max_index[current_t] = fixed_idx
+            #max_vals[:idx_t_stop] = fixed_val
+            max_vals[current_t] = map_data[fixed_idx, current_t]
 
     # Return arrays (same time order as t)
     wl_maximum = wl[max_index]
@@ -712,6 +714,209 @@ def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"
 
     #plt.tight_layout()
     return fig, (ax_lin, ax_log), (c_lin, c_log)
+
+# Spike detection
+
+# --- helper: sliding median (fast when sliding_window_view available) ---
+try:
+    from numpy.lib.stride_tricks import sliding_window_view
+    _has_swv = True
+except Exception:
+    _has_swv = False
+
+def _rolling_median(x, window):
+    """
+    Centered rolling median with odd window length.
+    Returns an array same length as x (edges padded by reflecting).
+    """
+    if window <= 1:
+        return x.copy()
+
+    if window % 2 == 0:
+        raise ValueError("window must be odd")
+
+    half = window // 2
+    # reflect-pad the array so center-window works at edges
+    xp = np.pad(x, pad_width=half, mode='reflect')
+
+    if _has_swv:
+        # fast vectorized sliding windows
+        views = sliding_window_view(xp, window_shape=window)
+        med = np.median(views, axis=1)
+        return med
+    else:
+        # safe fallback (still O(n*window) but fine for moderate sizes)
+        n = len(x)
+        med = np.empty(n, dtype=float)
+        for i in range(n):
+            seg = xp[i : i + window]
+            med[i] = np.median(seg)
+        return med
+
+# --- spike detection ---
+def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
+    """
+    Detect spike-like outliers in a 1D signal.
+
+    Method:
+      - compute centered rolling median (window must be odd)
+      - residual = signal - median
+      - robust scale = MAD = median(|residual|)
+      - mark points where |residual| > thresh * MAD
+      - optionally enforce minimum distance between detected spikes (min_distance samples)
+
+    Parameters
+    ----------
+    signal : 1D array-like
+        Input noisy signal.
+    window : int, odd (default 11)
+        Window length for centered median filter (should be odd, >1).
+    thresh : float (default 6.0)
+        Threshold multiplier on MAD to call a point a spike.
+    min_distance : int (default 1)
+        Minimum number of samples between reported spikes (keeps the largest residual in a cluster).
+
+    Returns
+    -------
+    spike_idx : ndarray of ints
+        Indices of detected spike points in the input signal.
+    """
+    s = np.asarray(signal, dtype=float)
+    if s.ndim != 1:
+        raise ValueError("signal must be 1D")
+
+    if window < 3:
+        # fallback: use global median
+        med = np.median(s) * np.ones_like(s)
+    else:
+        med = _rolling_median(s, window)
+
+    resid = s - med
+    mad = np.median(np.abs(resid))
+    # avoid mad == 0
+    if mad <= 0 or not np.isfinite(mad):
+        mad = np.std(resid) if np.std(resid) > 0 else 1e-12
+
+    mask = np.abs(resid) > (thresh * mad)
+
+    # enforce min_distance: keep local maxima of |resid| within runs
+    if min_distance > 1:
+        # find indices where mask True and cluster them
+        idx_true = np.nonzero(mask)[0]
+        if idx_true.size == 0:
+            return np.array([], dtype=int)
+        clusters = []
+        cur = [idx_true[0]]
+        for k in idx_true[1:]:
+            if k - cur[-1] <= min_distance:
+                cur.append(k)
+            else:
+                clusters.append(cur)
+                cur = [k]
+        clusters.append(cur)
+        chosen = [int(cluster[np.argmax(np.abs(resid[cluster]))]) for cluster in clusters]
+        return np.array(chosen, dtype=int)
+    else:
+        return np.nonzero(mask)[0].astype(int)
+
+
+# --- spike replacement by interpolation ---
+def replace_spikes_with_interp(signal, spike_idx, extend=0):
+    """
+    Replace spike samples with linear interpolation from nearest good neighbors.
+
+    Parameters
+    ----------
+    signal : 1D array-like
+        Original signal.
+    spike_idx : array-like of ints
+        Indices of spike samples to replace.
+    extend : int (default 0)
+        Optionally expand each spike index to a symmetric window of +/- extend samples
+        (useful if spikes are multi-sample).
+
+    Returns
+    -------
+    cleaned : ndarray (float)
+        New signal with spikes replaced by linear interpolation.
+    """
+    s = np.asarray(signal, dtype=float).copy()
+    n = s.size
+    if n == 0:
+        return s
+
+    if len(spike_idx) == 0:
+        return s
+
+    # build boolean mask of bad samples
+    bad = np.zeros(n, dtype=bool)
+    for idx in np.atleast_1d(spike_idx):
+        if idx < 0 or idx >= n:
+            continue
+        lo = max(0, idx - extend)
+        hi = min(n-1, idx + extend)
+        bad[lo:hi+1] = True
+
+    good_idx = np.nonzero(~bad)[0]
+    bad_idx = np.nonzero(bad)[0]
+
+    if good_idx.size == 0:
+        # nothing to interpolate from — return constant or original
+        return s
+
+    # linear interpolation: for bad indices, use np.interp over good points
+    # np.interp will extrapolate at ends using first/last good values.
+    x = np.arange(n)
+    s_clean = s.copy()
+    s_clean[bad_idx] = np.interp(bad_idx, good_idx, s[good_idx])
+
+    return s_clean
+
+
+# --- plotting utility ---
+def plot_spikes(signal, spike_idx, cleaned=None, ax=None, marker_kw=None, line_kw=None):
+    """
+    Plot original signal and mark detected spikes. Optionally overlay cleaned signal.
+
+    Parameters
+    ----------
+    signal : 1D array-like
+        Original signal.
+    spike_idx : array-like of ints
+        Indices of detected spikes.
+    cleaned : 1D array-like or None
+        Cleaned signal to overlay.
+    ax : matplotlib axis or None
+        Axis to plot on; if None a new figure is created.
+    marker_kw : dict or None
+        kwargs for spike markers (default red 'x', s=60).
+    line_kw : dict or None
+        kwargs for cleaned signal plot (default blue line).
+    """
+    s = np.asarray(signal, dtype=float)
+    n = s.size
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 3))
+    else:
+        fig = ax.figure
+
+    if marker_kw is None:
+        marker_kw = dict(color='red', marker='x', linestyle='None', markersize=8, label='spikes')
+    if line_kw is None:
+        line_kw = dict(color='blue', linewidth=1.5, label='cleaned')
+
+    x = np.arange(n)
+    ax.plot(x, s, color='gray', alpha=0.7, label='original')
+    if len(spike_idx) > 0:
+        ax.plot(spike_idx, s[spike_idx], **marker_kw)
+
+    if cleaned is not None:
+        ax.plot(x, cleaned, **line_kw)
+    ax.set_xlabel('sample')
+    ax.set_ylabel('value')
+    ax.legend()
+    return ax
+
 
 # deprecated
 def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):

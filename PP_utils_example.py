@@ -52,7 +52,7 @@ map_cut_2 = utilsPP.remove_bkg(t, map_cut, t_bkg)
 data_bkg_free = data_cut.remove_bkg_class(t_bkg)
 
 # smooting
-map_cut_2 = utilsPP.smooth_2d(map_cut_2, 3, 2)
+#map_cut_2 = utilsPP.smooth_2d(map_cut_2, 1, 1)
 #map_cut_2, k, s = utilsPP.svd_denoise(map_cut_2)
 
 # plot maps
@@ -105,7 +105,7 @@ for i in range(len(index_maximas)):
 #%% track maximumx
 
 max_vals, wl_max, idxs, t_out = utilsPP.track_maxima_fulltimeline(
-    wl_cut, t, map_cut,
+    wl_cut, t, map_cut_2,
     wl_search=[520, 540],
     t_start=1000,   # pick seed near t=100
     t_stop=60,   # t_stop earlier than t_start
@@ -120,7 +120,7 @@ ax.set_ylabel("dTT (%)")
 
 # assuming wl, t, map_data are defined and track_maxima_fulltimeline is loaded:
 fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
-    wl_cut, t, map_cut,
+    wl_cut, t, map_cut_2,
     wl_search=[520, 540],
     t_start=1000,   # pick seed near t=100
     t_stop=500,   # t_stop earlier than t_start
@@ -130,3 +130,13 @@ fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
 )
 plt.show()
 
+#%% Spike detection
+spikes = utilsPP.detect_spikes(max_vals, window=3, thresh=7.0, min_distance=2)
+print("Detected spikes:", spikes)
+
+# replace
+cleaned = utilsPP.replace_spikes_with_interp(max_vals, spikes, extend=0)
+
+# plot
+ax = utilsPP.plot_spikes(max_vals, spikes, cleaned=cleaned)
+plt.show()
