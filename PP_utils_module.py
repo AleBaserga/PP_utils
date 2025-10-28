@@ -165,6 +165,20 @@ def find_abs_max(vect):
     
     return i_max, vect[i_max]
 
+def calculate_fluence(powers, f_r, diameter):
+    """
+    TODO: fix this description
+    power -> uW
+    f_r -> Hz
+    diameter -> um
+    """
+    diameter = diameter/10000; #change from um to cm
+    area = np.pi() * diameter^2 / 4;
+
+    fluences = 2 * powers / (f_r * area)
+
+    return fluences
+
 # Denoising 
 
 def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:

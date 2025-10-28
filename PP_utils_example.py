@@ -18,10 +18,10 @@ plt.close("all")
     
 #%% Load File
 
+# load single file
 path = r"C:\Users\aless\Downloads\AleMatteo"
 os.chdir(path)
 
-file_vect = "d25100719_average"
 file_vect = "d25100602_average"
 loadPath = file_vect + ".dat"
 
@@ -36,7 +36,7 @@ t = data_s[0]
 wl = data_s[1]
 map_data = data_s[2]
 
-
+# load a famiy of files
 base_dir = r"C:\Users\aless\Downloads\AleMatteo"
 base_file = "d25100602.dat"
 
@@ -173,13 +173,4 @@ fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
 )
 plt.show()
 
-#%% Spike detection
-spikes = utilsPP.detect_spikes(max_vals, window=3, thresh=7.0, min_distance=2)
-print("Detected spikes:", spikes)
-
-# replace
-cleaned = utilsPP.replace_spikes_with_interp(max_vals, spikes, extend=0)
-
-# plot
-ax = utilsPP.plot_spikes(max_vals, spikes, cleaned=cleaned)
-plt.show()
+#%% see fluence dependence
