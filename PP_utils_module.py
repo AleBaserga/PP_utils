@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from scipy.ndimage import uniform_filter
+import re
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
@@ -52,6 +53,78 @@ def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="
         return PP_data(t, wl, map_data)
     else:
         return t, wl, map_data
+
+def find_related_files(base_dir: str, base_filename: str) -> list[str]:
+    """
+    Find all files in `base_dir` related to a given base file name.
+    Example:
+        base_filename = "d25093003.dat"
+        returns files like:
+            ["d25093003_1.dat", "d25093003_22.dat", "d25093003_99.dat"]
+    """
+    # Split base name and extension
+    base_name, ext = os.path.splitext(base_filename)
+    pattern = re.compile(rf"^{re.escape(base_name)}_(\d+){re.escape(ext)}$", re.IGNORECASE)
+
+    # List and filter
+    related = [f for f in os.listdir(base_dir) if pattern.match(f)]
+    # Sort numerically by the number after the underscore
+    related.sort(key=lambda f: int(pattern.match(f).group(1)))
+
+    return related
+
+def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last = True, **load_kwargs) -> np.ndarray:
+    """
+    Load and stack all map_data arrays from files matching base_filename pattern.
+
+    Parameters
+    ----------
+    base_dir : str
+        Directory containing the files.
+    base_filename : str
+        Reference filename (e.g. "d25093003.dat").
+    load_kwargs : dict
+        Additional arguments to pass to load_func.
+
+    Returns
+    -------
+    stacked_maps : np.ndarray
+        3D array of stacked map_data along first axis (N, n_wl, n_t).
+    file_list : list[str]
+        List of files used (full paths).
+    """
+    # --- find all related files ---
+    related_files = find_related_files(base_dir, base_filename)
+    if not related_files:
+        raise FileNotFoundError(f"No related files found for {base_filename} in {base_dir}")
+        
+    if discard_last:
+        related_files = related_files[0:-1]
+    
+    maps = []
+    file_list = []
+    for fname in related_files:
+        path = os.path.join(base_dir, fname)
+        data = load_dat(path, asClass= False)
+        
+        if isinstance(data, tuple):
+            _, _, map_data = data
+        else:
+            # Assume it's a PP_data-like class with attribute `.map`
+            map_data = data.map
+        maps.append(np.array(map_data, dtype=np.float64))
+        file_list.append(path)
+
+    # --- stack along first axis ---
+    stacked_maps = np.stack(maps, axis=0)
+    return stacked_maps, file_list
+
+def mean_stack(stacked):
+    """
+    TODO: fix this description
+    """
+    
+    return np.mean(stacked, axis=0)
 
 # Miscellaneous Useful Functions
 def find_in_vector(vect, value):
@@ -114,6 +187,9 @@ def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     """
     if array.ndim != 2:
         raise ValueError("Input array must be 2D.")
+        
+    if p == 0 and r == 0:
+        return array.copy()
 
     # Ensure window sizes are odd so the filter is centered
     size = (max(1, 2*p+1), max(1, 2*r+1))
@@ -230,7 +306,6 @@ def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, retur
         return denoised, chosen_rank, s, U, Vh
     return denoised, chosen_rank, s
 
-
 # Data extraction and manipulation
 
 def extract_spectra(t, map_matrix, values_to_extract):
@@ -239,6 +314,7 @@ def extract_spectra(t, map_matrix, values_to_extract):
     """
     index_extract = find_in_vector_multiple(t, values_to_extract)
     return map_matrix[:, index_extract], index_extract
+
 
 def extract_dyns(wl_array, map_matrix, values_to_extract):
     """
@@ -260,6 +336,19 @@ def cut_spectra(wl, map_mat, wl_lims):
     map_cut = map_mat[idx_min:idx_max+1, :]
     
     return wl_cut, map_cut
+
+def cut_spectra_stacked(wl, stacked, wl_lims):
+    """
+    TODO: fix this description
+    """
+    wl_cut, map_cut_TEMP = cut_spectra(wl, stacked[0], wl_lims)
+    stacked_cut = np.zeros((stacked.shape[0], map_cut_TEMP.shape[0], map_cut_TEMP.shape[1]), dtype=np.float64)
+    
+    for i in range(stacked.shape[0]):
+        _, map_cut = cut_spectra(wl, stacked[i], wl_lims)
+        stacked_cut[i] = map_cut
+    
+    return wl_cut, stacked_cut
 
 def find_abs_max_spectra(t, wl, map_mat, t_find):
     """
@@ -417,7 +506,6 @@ def track_maxima_fulltimeline(wl, t, map_data, wl_search, t_start, t_stop, maxSt
     # Return arrays (same time order as t)
     wl_maximum = wl[max_index]
     return max_vals, wl_maximum, max_index, t
-
 
 # Plotting functions 
 
@@ -625,7 +713,6 @@ def plot_tracked_wavelength_vs_time(
     #plt.tight_layout()
     return fig, ax, tracked_line, tracked_scatter, cbar
 
-
 def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"):
     """
     Plot a pump-probe 2D map with a linear x-axis on the left
@@ -715,16 +802,90 @@ def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"
     #plt.tight_layout()
     return fig, (ax_lin, ax_log), (c_lin, c_log)
 
+def plot_dynamics_stack(t, wl, stacked, wl_choice, meas_indices=None, figsize=(8,3), cmap_name='plasma', show_mean_std=True):
+    """
+    Plot dynamics (t vs value) for ALL measurements at a chosen wavelength (or list of wavelengths).
+
+    Parameters
+    ----------
+    t : 1D array (n_delays,)
+        Delay/time axis.
+    wl : 1D array (n_wl,)
+        Wavelength axis.
+    stacked : ndarray (n_meas, n_wl, n_delays)
+        Stacked dataset.
+    wl_choice : float or sequence of floats
+        Wavelength(s) to plot. If a single float, nearest wl is used. If multiple, plots one panel per chosen wl.
+    meas_indices : sequence or None
+        If provided, plot only this subset of measurement indices (otherwise plot all).
+    figsize : tuple
+        Figure size.
+    cmap_name : str
+        Colormap name to color lines across measurements.
+    show_mean_std : bool, default True
+        If True, overlay the mean dynamic ± std deviation across measurements.
+
+    Returns
+    -------
+    fig, ax or axs
+    """
+    stacked = np.asarray(stacked)
+    if stacked.ndim != 3:
+        raise ValueError("stacked must be 3D (n_meas, n_wl, n_delays)")
+
+    n_meas, n_wl, n_delays = stacked.shape
+    t = np.asarray(t)
+    wl = np.asarray(wl)
+
+    # choose measurements
+    if meas_indices is None:
+        meas_indices = np.arange(n_meas)
+    else:
+        meas_indices = np.asarray(meas_indices, dtype=int)
+
+    # handle multiple wl choices
+    if np.isscalar(wl_choice):
+        wl_choice = [wl_choice]
+
+    n_plots = len(wl_choice)
+    fig, axs = plt.subplots(1, n_plots, figsize=(figsize[0]*n_plots, figsize[1]), squeeze=False)
+    axs = axs.ravel()
+
+    # colormap
+    colors = create_diverging_colormap(n_meas, cmap_name)
+
+    for ip, wl_val in enumerate(wl_choice):
+        ax = axs[ip]
+        idx = find_in_vector(wl, wl_val)
+        dynamics = stacked[:, idx, :]  # shape (n_meas, n_delays)
+        for k, mi in enumerate(meas_indices):
+            ax.plot(t, dynamics[mi], color=colors[k], label=f"meas {mi}" if n_plots==1 else f"{wl[idx]:.2f} nm - meas {mi}")
+        
+        if show_mean_std:
+            mean_dyn = np.mean(dynamics[meas_indices], axis=0)
+            std_dyn = np.std(dynamics[meas_indices], axis=0)
+            ax.plot(t, mean_dyn, color='red', lw=2.5, label='Mean')
+            ax.fill_between(t, mean_dyn - std_dyn, mean_dyn + std_dyn,
+                            color='gray', alpha=0.3, label='±1σ')
+            
+        ax.set_xlabel("Delay (fs)")
+        ax.set_ylabel("dTT (%)")
+        ax.set_title(f"Wavelength {wl[idx]:.2f} nm")
+        ax.set_xlim([t.min(), t.max()])
+        if n_plots == 1:
+            ax.legend(loc='upper right', fontsize='small')
+    plt.tight_layout()
+    return fig, axs if n_plots>1 else (fig, axs[0])        
+        
 # Spike detection
 
-# --- helper: sliding median (fast when sliding_window_view available) ---
 try:
     from numpy.lib.stride_tricks import sliding_window_view
     _has_swv = True
 except Exception:
     _has_swv = False
 
-def _rolling_median(x, window):
+def _rolling_median_1D(x, window):
     """
     Centered rolling median with odd window length.
     Returns an array same length as x (edges padded by reflecting).
@@ -753,7 +914,6 @@ def _rolling_median(x, window):
             med[i] = np.median(seg)
         return med
 
-# --- spike detection ---
 def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
     """
     Detect spike-like outliers in a 1D signal.
@@ -789,7 +949,7 @@ def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
         # fallback: use global median
         med = np.median(s) * np.ones_like(s)
     else:
-        med = _rolling_median(s, window)
+        med = _rolling_median_1D(s, window)
 
     resid = s - med
     mad = np.median(np.abs(resid))
@@ -819,8 +979,6 @@ def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
     else:
         return np.nonzero(mask)[0].astype(int)
 
-
-# --- spike replacement by interpolation ---
 def replace_spikes_with_interp(signal, spike_idx, extend=0):
     """
     Replace spike samples with linear interpolation from nearest good neighbors.
@@ -872,8 +1030,6 @@ def replace_spikes_with_interp(signal, spike_idx, extend=0):
 
     return s_clean
 
-
-# --- plotting utility ---
 def plot_spikes(signal, spike_idx, cleaned=None, ax=None, marker_kw=None, line_kw=None):
     """
     Plot original signal and mark detected spikes. Optionally overlay cleaned signal.
@@ -917,6 +1073,202 @@ def plot_spikes(signal, spike_idx, cleaned=None, ax=None, marker_kw=None, line_k
     ax.legend()
     return ax
 
+def detect_spikes_stack_at_wl(stacked, wl, wl_choice, window=11, thresh=6.0, min_distance=1):
+    """
+    Detect spikes in a stacked dataset (n_meas, n_wl, n_delays) by applying the 1D
+    detect_spikes function to each measurement's time trace at the wavelength nearest to wl_choice.
+
+    Parameters
+    ----------
+    stacked : ndarray, shape (n_meas, n_wl, n_delays)
+    wl : 1D array of length n_wl (wavelengths)
+    wl_choice : float (wavelength to use as detector) or integer index
+    window, thresh, min_distance : passed to detect_spikes
+
+    Returns
+    -------
+    spike_mask : ndarray(bool), shape (n_meas, n_delays)
+        True where that measurement and delay is flagged as a spike.
+    detected_indices : list of ndarray
+        For each measurement, the array of spike indices (may be empty).
+    wl_index : int
+        Wavelength index used for detection.
+    """
+    stacked = np.asarray(stacked)
+    if stacked.ndim != 3:
+        raise ValueError("stacked must be 3D (n_meas, n_wl, n_delays)")
+    n_meas, n_wl, n_delays = stacked.shape
+    wl = np.asarray(wl)
+
+    wl_idx = int(np.argmin(np.abs(wl - float(wl_choice))))
+
+    spike_mask = np.zeros((n_meas, n_delays), dtype=bool)
+    detected_indices = [None] * n_meas
+
+    # apply detect_spikes to each measurement's trace at wl_idx
+    for mi in range(n_meas):
+        sig = stacked[mi, wl_idx, :]
+        idxs = detect_spikes(sig, window=window, thresh=thresh, min_distance=min_distance)
+        detected_indices[mi] = idxs
+        if idxs.size > 0:
+            spike_mask[mi, idxs] = True
+
+    return spike_mask, detected_indices, wl_idx
+
+        
+def detect_spikes_stack(stacked, wl_thresh=0.5, point_thresh=0.1, mode='absolute', min_count_same_time=1):
+    """
+    Detect spikes in stacked dataset using the rule:
+      - compute median_map = median over measurements -> shape (n_wl, n_delays)
+      - compute difference per measurement: D = |stacked - median_map|
+      - (mode=='relative'): normalize D by max(|median_map|, eps)
+      - for each (measurement, delay) count how many wavelengths have D > point_thresh
+      - if count >= threshold_count -> (measurement, delay) is a spike
+
+    Parameters
+    ----------
+    stacked : ndarray (n_meas, n_wl, n_delays)
+    wl_thresh : float
+        If 0 < wl_thresh < 1, treated as fraction of wavelengths (e.g. 0.2 means 20%).
+        If wl_thresh >= 1, treated as integer number of wavelengths.
+    point_thresh : float
+        Threshold for per-wavelength comparison. In 'relative' mode this is a fraction
+        (e.g. 0.1 = 10% difference). In 'absolute' mode it's in the same units as data.
+    mode : {'relative', 'absolute'}
+        Comparison mode.
+    min_count_same_time : int
+        (Optional) require that at least this many measurements share spike at same delay
+        before flagging? (not used now; placeholder)
+
+    Returns
+    -------
+    spike_mask : ndarray(bool) shape (n_meas, n_delays)
+        True where that measurement/time is considered spike.
+    info : dict
+        Additional diagnostic arrays: 'median_map', 'diff' (abs or rel), 'counts' (n_wl exceeding point_thresh)
+    """
+    stacked = np.asarray(stacked)
+    if stacked.ndim != 3:
+        raise ValueError("stacked must be shape (n_meas, n_wl, n_delays)")
+
+    n_meas, n_wl, n_delays = stacked.shape
+
+    # median across measurements
+    median_map = np.median(stacked, axis=0)   # shape (n_wl, n_delays)
+
+    # compute absolute diff or relative diff
+    if mode == 'relative':
+        eps = 1e-12
+        denom = np.maximum(np.abs(median_map), eps)
+        diff = np.abs(stacked - median_map[None, ...]) / denom[None, ...]
+    elif mode == 'absolute':
+        diff = np.abs(stacked - median_map[None, ...])
+    else:
+        raise ValueError("mode must be 'relative' or 'absolute'")
+
+    # boolean per-wavelength exceed
+    exceed = diff > point_thresh   # shape (n_meas, n_wl, n_delays)
+
+    # count across wavelengths for each (meas, delay)
+    counts = np.sum(exceed, axis=1)  # shape (n_meas, n_delays)
+
+    # interpret wl_thresh: fraction -> integer count
+    if 0 < wl_thresh < 1:
+        threshold_count = int(np.ceil(wl_thresh * n_wl))
+    else:
+        threshold_count = int(wl_thresh)
+
+    spike_mask = counts >= threshold_count  # shape (n_meas, n_delays)
+
+    info = {
+        'median_map': median_map,
+        'diff': diff,
+        'exceed': exceed,
+        'counts': counts,
+        'threshold_count': threshold_count
+    }
+    return spike_mask, info
+
+def replace_spikes_stack_with_median_spectrum(stacked, spike_mask):
+    """
+    Replace full spectra at flagged (measurement, delay) positions by the median spectrum
+    computed across measurements at that delay.
+
+    Parameters
+    ----------
+    stacked : ndarray (n_meas, n_wl, n_delays)
+    spike_mask : ndarray(bool) shape (n_meas, n_delays)
+
+    Returns
+    -------
+    cleaned : ndarray same shape as stacked
+    """
+    stacked = np.asarray(stacked).copy()
+    if stacked.ndim != 3:
+        raise ValueError("stacked must be 3D")
+    n_meas, n_wl, n_delays = stacked.shape
+    spike_mask = np.asarray(spike_mask, dtype=bool)
+    if spike_mask.shape != (n_meas, n_delays):
+        raise ValueError("spike_mask must have shape (n_meas, n_delays)")
+
+    # median spectrum across measurements at each delay: shape (n_wl, n_delays)
+    median_map = np.median(stacked, axis=0)
+
+    # indices to replace
+    meas_idx, delay_idx = np.nonzero(spike_mask)
+    if meas_idx.size > 0:
+        # vectorized assignment: for each pair (mi, d) assign median_map[:, d]
+        for mi, d in zip(meas_idx, delay_idx):
+            stacked[mi, :, d] = median_map[:, d]
+
+    return stacked
+
+def plot_spike_mask_overlay(t, wl, stacked, spike_mask, wl_choice=None, meas_indices=None,
+                            figsize=(8,4), alpha=0.5, cmap_name='viridis'):
+    """
+    Plot dynamics of all measurements (overlapped) at chosen wl (or averaged across wl if wl_choice is None),
+    and overlay markers where spike_mask is True.
+
+    Parameters
+    ----------
+    t : 1D delays
+    stacked : (n_meas, n_wl, n_delays)
+    spike_mask : (n_meas, n_delays) boolean
+    wl_choice : float or None
+       If float -> nearest wavelength plotted; if None -> average across wavelengths.
+    meas_indices : sequence or None -> which measurements to plot.
+    """
+    stacked = np.asarray(stacked)
+    n_meas, n_wl, n_delays = stacked.shape
+    t = np.asarray(t)
+
+    if meas_indices is None:
+        meas_indices = np.arange(n_meas)
+    else:
+        meas_indices = np.asarray(meas_indices, dtype=int)
+
+    if wl_choice is None:
+        series = stacked.mean(axis=1)  # (n_meas, n_delays)
+    else:
+        idx = find_in_vector(np.asarray(wl), wl_choice)
+        series = stacked[:, idx, :]
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    colors = create_diverging_colormap(n_meas, cmap_name)
+
+    for k, mi in enumerate(meas_indices):
+        ax.plot(t, series[mi], color=colors[k], alpha=alpha)
+        spikes_t = t[spike_mask[mi]]
+        spikes_y = series[mi, spike_mask[mi]]
+        if spikes_t.size>0:
+            ax.scatter(spikes_t, spikes_y, color='red', marker='x', s=30)
+
+    ax.set_xlabel("Delay")
+    ax.set_ylabel("Signal")
+    ax.set_title("Overlaid dynamics with spikes marked (red x)")
+    plt.tight_layout()
+    return fig, ax
 
 # deprecated
 def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):

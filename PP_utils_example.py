@@ -18,13 +18,13 @@ plt.close("all")
     
 #%% Load File
 
-path = r"C:\Users\aless\Downloads\AleMatteo\251007"
 path = r"C:\Users\aless\Downloads\AleMatteo"
 os.chdir(path)
 
 file_vect = "d25100719_average"
 file_vect = "d25100602_average"
 loadPath = file_vect + ".dat"
+
 
 # Let's use load the data as a class
 data = utilsPP.load_dat(loadPath, asClass= True)
@@ -35,6 +35,49 @@ data_s = utilsPP.load_dat(loadPath, asClass= False)
 t = data_s[0]
 wl = data_s[1]
 map_data = data_s[2]
+
+
+base_dir = r"C:\Users\aless\Downloads\AleMatteo"
+base_file = "d25100602.dat"
+
+# Find all related files
+related = utilsPP.find_related_files(base_dir, base_file)
+print("Related files:", related)
+
+# Load and stack
+stacked, files_used = utilsPP.load_and_stack_related_maps(base_dir, base_file)
+print("Stacked shape:", stacked.shape)
+
+# Cut
+wl_l = [500, 600]
+wl_cut, stacked_cut = utilsPP.cut_spectra_stacked(wl, stacked, wl_l)
+
+# plot all measurements in single graph
+fig, ax = utilsPP.plot_dynamics_stack(t, wl_cut, stacked_cut, wl_choice=[530.0, 520], show_mean_std = True)
+
+# find the spikes
+spike_mask, detected_indices, wl_idx = utilsPP.detect_spikes_stack_at_wl(stacked_cut, wl_cut, 530.0, window=11, thresh=15.0, min_distance=1)
+
+# plot overlay with spikes marked
+fig2, ax2 = utilsPP.plot_spike_mask_overlay(t, wl_cut, stacked_cut, spike_mask, wl_choice=530)
+
+# clean the spikes
+cleaned = utilsPP.replace_spikes_stack_with_median_spectrum(stacked_cut, spike_mask)
+
+# show the difference
+before_m = utilsPP.mean_stack(stacked_cut)
+after_m = utilsPP.mean_stack(cleaned)
+
+fig, ax = plt.subplots(figsize=(8, 3))
+wl_p = utilsPP.find_in_vector(wl_cut, 530)
+ax.plot(t, before_m[wl_p], label="before spike det")
+ax.plot(t, after_m[wl_p], label="after spike det")
+ax.set_xlabel("Delay (fs)")
+ax.set_ylabel("dTT (%)")
+ax.legend()
+
+wl = wl_cut
+map_data = after_m
 
 #%% Manipulate data to cut relevant information
 
@@ -52,7 +95,7 @@ map_cut_2 = utilsPP.remove_bkg(t, map_cut, t_bkg)
 data_bkg_free = data_cut.remove_bkg_class(t_bkg)
 
 # smooting
-#map_cut_2 = utilsPP.smooth_2d(map_cut_2, 1, 1)
+map_cut_2 = utilsPP.smooth_2d(map_cut_2, 0, 0)
 #map_cut_2, k, s = utilsPP.svd_denoise(map_cut_2)
 
 # plot maps
