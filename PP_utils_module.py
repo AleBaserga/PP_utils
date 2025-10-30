@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import os
 from scipy.ndimage import uniform_filter
 import re
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
@@ -768,7 +769,7 @@ def compute_clims_auto(matrix):
     vmin = -vmax
     return vmin, vmax
 
-def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto"):
+def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto", show_colorbar=True):
     """
     TODO: fix this description
     """
@@ -789,10 +790,17 @@ def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto"):
     fig, ax = plt.subplots(1, 1)
     c = ax.pcolormesh(t, wl, map_mat, shading="auto", cmap = cmap_use, vmin = vmin_use, vmax = vmax_use)
     
-    cb = plt.colorbar(c, ax=ax)
-    cb.set_label("dTT")
     ax.set_xlabel("Delay (fs)")
     ax.set_ylabel("Wavelength (nm)")
+    
+    if show_colorbar:
+        colorbar_pad = 0.02
+        colorbar_size = 0.1
+        # place a colorbar to the right of this axis without overlapping the next subplot
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size=colorbar_size, pad=colorbar_pad)
+        cb = fig.colorbar(c, cax=cax)
+        cb.set_label("dTT")
     
     return fig, ax, c
 
