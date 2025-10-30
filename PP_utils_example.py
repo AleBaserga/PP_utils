@@ -178,6 +178,7 @@ plt.show()
 
 #%% see fluence dependence
 
+# define your routine in a function
 def find_abs_max_dyn_multiple_files(path_folder, file_name_vector, wl_l, t_to_find_peak, t_bkg):
     
     for i in range(len(file_name_vector)):
@@ -223,6 +224,7 @@ def find_abs_max_dyn_multiple_files(path_folder, file_name_vector, wl_l, t_to_fi
         
     return dyn_max_mat, i_taken_mat
 
+# define a list of your files and powers
 path_folder = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
 #file_name_vector = ["d25100909", "d25100913", "d25100913", "d25100913","d25100913"]
 file_seed = "d251009"
@@ -230,23 +232,38 @@ file_nums = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24]
 file_name_vector = utilsPP.generate_string_list(file_seed, file_nums)
 powers = [2.35, 1.55, 4.0, 10, 16, 12, 4, 13.657, 8.0, 2.343, 1.072, 14.928, 6.0, 2.0, 0.4]
 
+# sort it from low to high power
 file_name_vector, powers = utilsPP.sort_two_lists(file_name_vector, powers)
 
+# call the loading function
 t_bkg = -1000
 wl_l = [500, 740]
 t_to_find_peak = [2000]
 
 dyn_max_mat, i_taken_mat = find_abs_max_dyn_multiple_files(path_folder, file_name_vector, wl_l, t_to_find_peak, t_bkg)
 
-fig, ax = plt.subplots(figsize=(8, 3))
+# plot results
 
+fig, ax = plt.subplots(figsize=(8, 3))
+colors = utilsPP.create_diverging_colormap(dyn_max_mat.shape[0], 'plasma')
+
+max_vect = []
 for i in range(dyn_max_mat.shape[0]):
     dyn = dyn_max_mat[i]
     
-    y = dyn / max(abs(dyn))
+    my = max(abs(dyn))
+    max_vect.append(my)
     
-    ax.plot(t, y, label=f"power = {powers[i]:.2f} uW")
+    y = dyn / my
+    
+    ax.plot(t, y, label=f"power = {powers[i]:.2f} uW", color=colors[i])
 
 ax.set_xlabel("Delay (fs)")
 ax.set_ylabel("dTT (norm)")
 ax.legend()
+
+
+fig, ax = plt.subplots(figsize=(8, 3))
+ax.plot(powers, max_vect, "o-", color="red")
+ax.set_xlabel("Power (uW)")
+ax.set_ylabel("dTT (%)")
