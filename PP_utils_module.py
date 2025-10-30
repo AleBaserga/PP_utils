@@ -108,7 +108,7 @@ def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last 
         data = load_dat(path, asClass= False)
         
         if isinstance(data, tuple):
-            _, _, map_data = data
+            t, wl, map_data = data
         else:
             # Assume it's a PP_data-like class with attribute `.map`
             map_data = data.map
@@ -117,7 +117,7 @@ def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last 
 
     # --- stack along first axis ---
     stacked_maps = np.stack(maps, axis=0)
-    return stacked_maps, file_list
+    return t, wl, stacked_maps, file_list
 
 def mean_stack(stacked):
     """
@@ -126,6 +126,19 @@ def mean_stack(stacked):
     
     return np.mean(stacked, axis=0)
 
+def generate_string_list(base: str, numbers: list[int]) -> list[str]:
+    """
+    Generate a list of strings formed by concatenating a base string
+    with zero-padded two-digit numbers.
+
+    Example:
+    --------
+    base = "d251009"
+    numbers = [1, 13]
+    -> ["d25100901", "d25100913"]
+    """
+    return [f"{base}{num:02d}.dat" for num in numbers]
+        
 # Miscellaneous Useful Functions
 def find_in_vector(vect, value):
     """
@@ -179,7 +192,184 @@ def calculate_fluence(powers, f_r, diameter):
 
     return fluences
 
+def sort_two_lists(list1, list2):
+    """
+    TODO: fix this description
+    this sorts parallely the two list using ascending order of list2
+    """
+    list1_sorted, list2_sorted = zip(*sorted(zip(list1, list2), key=lambda x: x[1]))
+    list1_sorted = list(list1_sorted)
+    list2_sorted = list(list2_sorted)
+    
+    return list1_sorted, list2_sorted
+
 # Denoising 
+
+try:
+    from scipy import ndimage as ndi
+    _HAS_SCIPY = True
+except Exception:
+    _HAS_SCIPY = False
+
+def _make_exponential_kernel(length, decay):
+    """
+    Create a causal exponential kernel of given length.
+    decay controls how fast the weights decay:
+        kernel[i] = exp(-i / decay) for i = 0..length-1
+    The kernel is normalized to sum=1.
+    """
+    if length <= 0:
+        raise ValueError("length must be > 0")
+    pos = np.arange(length, dtype=float)
+    k = np.exp(-pos / float(decay))
+    k /= k.sum()
+    return k
+
+def smooth_along_axis(arr, axis=-1, method="uniform", window=5, sigma=None, decay=None, mode="reflect"):
+    """
+    Smooth a 2D or 3D array along a chosen axis.
+
+    Parameters
+    ----------
+    arr : ndarray
+        Input array of ndim == 2 or 3.
+    axis : int, optional
+        Axis along which to smooth (default -1).
+    method : str, optional
+        One of {"uniform", "gaussian", "exponential"}.
+          - "uniform": moving average of length `window`.
+          - "gaussian": gaussian smoothing with std `sigma` (if sigma is None a rule-of-thumb from window is used).
+          - "exponential": exponentially weighted moving average using `decay` or `window`.
+    window : int, optional
+        Window length for "uniform" or for "exponential" if `decay` is None.
+        Must be a positive integer. Default 5.
+    sigma : float or None, optional
+        Standard deviation for Gaussian smoothing. If None and method=="gaussian",
+        sigma will be set to max(0.5, window/3).
+    decay : float or None, optional
+        Decay constant for exponential kernel. If None and method=="exponential",
+        decay defaults to window/3.
+    mode : str, optional
+        Boundary mode for convolution (same semantics as scipy.ndimage.convolve1d):
+        'reflect', 'constant', 'nearest', 'mirror', 'wrap'. Default 'reflect'.
+
+    Returns
+    -------
+    out : ndarray
+        Smoothed array, same shape as `arr` and dtype float64.
+
+    Notes
+    -----
+    - The function only smooths along one axis; other axes are left unchanged.
+    - For large inputs, prefer SciPy because it's vectorized and fast.
+    """
+    arr = np.asarray(arr)
+    if arr.ndim not in (2, 3):
+        raise ValueError("arr must be 2D or 3D")
+
+    axis = int(axis)
+    axis = axis if axis >= 0 else arr.ndim + axis
+    if axis < 0 or axis >= arr.ndim:
+        raise IndexError("axis out of range")
+
+    if method not in ("uniform", "gaussian", "exponential"):
+        raise ValueError("method must be 'uniform', 'gaussian' or 'exponential'")
+
+    # Validate params
+    if method in ("uniform", "exponential"):
+        window = int(window)
+        if window < 1:
+            raise ValueError("window must be >= 1")
+
+    if method == "gaussian":
+        if sigma is None:
+            sigma = max(0.5, window / 3.0)
+        sigma = float(sigma)
+
+    if method == "exponential":
+        if decay is None:
+            decay = max(0.1, float(window) / 3.0)
+        decay = float(decay)
+
+    # Convert to float64 for numerical stability
+    out = arr.astype(np.float64, copy=True)
+
+    # Helper: apply 1D convolution along axis using kernel k
+    def _convolve1d_numpy(a, k, axis, mode):
+        """
+        Perform 1D convolution along axis using numpy's fftless approach:
+        - pad using reflect/constant etc (we implement reflect and constant; others we map to reflect)
+        - use sliding window via stride tricks if small, otherwise fallback to np.apply_along_axis
+        This is not as fast as scipy but robust.
+        """
+        from numpy.lib.stride_tricks import sliding_window_view
+
+        if mode not in ("reflect", "constant"):
+            # for simplicity map other modes to reflect
+            pad_mode = "reflect"
+        else:
+            pad_mode = mode
+
+        half = (k.size - 1) // 2  # we will pad symmetric to preserve centered conv for uniform/gauss
+        # Build pad widths tuple for np.pad
+        pad_width = [(0, 0)] * a.ndim
+        pad_width[axis] = (half, half)
+        a_pad = np.pad(a, pad_width=pad_width, mode=pad_mode)
+
+        # Use sliding window view for vectorized conv if available
+        try:
+            sw = sliding_window_view(a_pad, window_shape=k.size, axis=axis)
+            # sw shape: same as a plus last axis=k.size
+            # multiply and sum over last axis
+            # move kernel to an axis with correct broadcast shape
+            # we want to multiply along the last axis and sum
+            out_conv = np.tensordot(sw, k[::-1], axes=([sw.ndim - 1], [0]))
+            # tensordot yields shape of sw without last axis; that equals a.shape
+            return out_conv
+        except Exception:
+            # fallback to apply along axis
+            def conv1d_vec(v):
+                return np.convolve(v, k, mode="same")
+            return np.apply_along_axis(conv1d_vec, axis, a)
+
+    # Choose method implementation
+    if method == "uniform":
+        # uniform kernel of length window
+        k = np.ones(window, dtype=float) / float(window)
+        if _HAS_SCIPY:
+            out = ndi.convolve1d(out, weights=k, axis=axis, mode=mode, origin=0)
+        else:
+            out = _convolve1d_numpy(out, k, axis, mode)
+
+    elif method == "gaussian":
+        if _HAS_SCIPY:
+            # gaussian_filter1d is vectorized for N-D arrays
+            out = ndi.gaussian_filter1d(out, sigma=sigma, axis=axis, mode=mode)
+        else:
+            # approximate gaussian kernel with window length
+            length = max(3, int(np.ceil(sigma * 8)))  # 8 sigma rule
+            if length % 2 == 0:
+                length += 1
+            x = np.arange(length) - (length - 1) / 2.0
+            k = np.exp(-(x**2) / (2.0 * sigma**2))
+            k /= k.sum()
+            out = _convolve1d_numpy(out, k, axis, mode)
+
+    else:  # exponential
+        # Use causal kernel centered around current point; build symmetric kernel so convolution is centered
+        # build length window kernel (we create a causal then center it)
+        length = int(window)
+        k = _make_exponential_kernel(length, decay)
+        # For a centered replacement of causal EWMA we reverse the kernel so highest weight is at center
+        # If you prefer true causal EWMA (only past samples), replace with appropriate convolution
+        k_centered = np.concatenate((k[length//2 + 1:][::-1], k[:length//2 + 1]))
+        k_centered = k_centered / k_centered.sum()
+        if _HAS_SCIPY:
+            out = ndi.convolve1d(out, weights=k_centered, axis=axis, mode=mode, origin=0)
+        else:
+            out = _convolve1d_numpy(out, k_centered, axis, mode)
+
+    return out
 
 def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     """
@@ -210,7 +400,6 @@ def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     
     smoothed = uniform_filter(array, size=size, mode="reflect")
     return smoothed
-
 
 def _choose_rank_from_singulars(s, method="energy", energy=0.99, tol=1e-2):
     """
@@ -248,7 +437,6 @@ def _choose_rank_from_singulars(s, method="energy", energy=0.99, tol=1e-2):
         return int(k)
 
     raise ValueError(f"Unknown rank selection method: {method}")
-
 
 def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, return_uv=False):
     """
@@ -328,7 +516,6 @@ def extract_spectra(t, map_matrix, values_to_extract):
     """
     index_extract = find_in_vector_multiple(t, values_to_extract)
     return map_matrix[:, index_extract], index_extract
-
 
 def extract_dyns(wl_array, map_matrix, values_to_extract):
     """
@@ -1128,8 +1315,7 @@ def detect_spikes_stack_at_wl(stacked, wl, wl_choice, window=11, thresh=6.0, min
             spike_mask[mi, idxs] = True
 
     return spike_mask, detected_indices, wl_idx
-
-        
+    
 def detect_spikes_stack(stacked, wl_thresh=0.5, point_thresh=0.1, mode='absolute', min_count_same_time=1):
     """
     Detect spikes in stacked dataset using the rule:
@@ -1369,8 +1555,6 @@ def find_abs_max_dyn_multiple_files(file_path_vector, wl_l, t_to_find_peak):
         i_taken_mat[i, :] = i_max
         
     return dyn_max_mat, i_taken_mat
-
-    
 
 #%% let's try to use a call of PP data
 

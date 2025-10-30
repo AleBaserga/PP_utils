@@ -19,10 +19,10 @@ plt.close("all")
 #%% Load File
 
 # load single file
-path = r"C:\Users\aless\Downloads\AleMatteo"
+path = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
 os.chdir(path)
 
-file_vect = "d25100602_average"
+file_vect = "d25100913_average"
 loadPath = file_vect + ".dat"
 
 
@@ -30,36 +30,37 @@ loadPath = file_vect + ".dat"
 data = utilsPP.load_dat(loadPath, asClass= True)
 print(data)
 
+
 # Or let's load it as single files
 data_s = utilsPP.load_dat(loadPath, asClass= False)
 t = data_s[0]
 wl = data_s[1]
 map_data = data_s[2]
 
-# load a famiy of files
-base_dir = r"C:\Users\aless\Downloads\AleMatteo"
-base_file = "d25100602.dat"
+#%% load a famiy of files
+base_dir = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
+base_file = "d25100913.dat"
 
 # Find all related files
 related = utilsPP.find_related_files(base_dir, base_file)
 print("Related files:", related)
 
 # Load and stack
-stacked, files_used = utilsPP.load_and_stack_related_maps(base_dir, base_file)
+t, wl, stacked, files_used = utilsPP.load_and_stack_related_maps(base_dir, base_file)
 print("Stacked shape:", stacked.shape)
 
 # Cut
-wl_l = [500, 600]
+wl_l = [500, 740]
 wl_cut, stacked_cut = utilsPP.cut_spectra_stacked(wl, stacked, wl_l)
 
 # plot all measurements in single graph
-fig, ax = utilsPP.plot_dynamics_stack(t, wl_cut, stacked_cut, wl_choice=[530.0, 520], show_mean_std = True)
+fig, ax = utilsPP.plot_dynamics_stack(t, wl_cut, stacked_cut, wl_choice=[630.0], show_mean_std = True)
 
 # find the spikes
 spike_mask, detected_indices, wl_idx = utilsPP.detect_spikes_stack_at_wl(stacked_cut, wl_cut, 530.0, window=11, thresh=15.0, min_distance=1)
 
 # plot overlay with spikes marked
-fig2, ax2 = utilsPP.plot_spike_mask_overlay(t, wl_cut, stacked_cut, spike_mask, wl_choice=530)
+fig2, ax2 = utilsPP.plot_spike_mask_overlay(t, wl_cut, stacked_cut, spike_mask, wl_choice=630)
 
 # clean the spikes
 cleaned = utilsPP.replace_spikes_stack_with_median_spectrum(stacked_cut, spike_mask)
@@ -79,23 +80,25 @@ ax.legend()
 wl = wl_cut
 map_data = after_m
 
+
 #%% Manipulate data to cut relevant information
 
 # Cut spectra
-wl_l = [500, 600]
+wl_l = [500, 740]
 wl_cut, map_cut = utilsPP.cut_spectra(wl, map_data, wl_l)
 
 data_cut = data.cut_spectra_class(wl_l)
 print(data_cut)
 
 # bkg cleaning
-t_bkg = -400
+t_bkg = -1000
 map_cut_2 = utilsPP.remove_bkg(t, map_cut, t_bkg)
 
 data_bkg_free = data_cut.remove_bkg_class(t_bkg)
 
 # smooting
-map_cut_2 = utilsPP.smooth_2d(map_cut_2, 0, 0)
+map_cut_2 = utilsPP.smooth_along_axis(map_cut_2, axis=0, method="uniform", window=5)
+#map_cut_2 = utilsPP.smooth_2d(map_cut_2, 0, 0)
 #map_cut_2, k, s = utilsPP.svd_denoise(map_cut_2)
 
 # plot maps
@@ -123,7 +126,6 @@ fig, (ax_lin, ax_log), (c_lin, c_log) = utilsPP.plot_map_linear_log(
     clims="auto"
 )
 
-
 #%% Extract Spectrum and maximas
 ts = [1.5, 10, 20]
 ts = np.array(ts)
@@ -146,10 +148,11 @@ for i in range(len(index_maximas)):
     ax.legend([f"V_max {t[i_taken[i]]} ps" for i in range(len(index_maximas))])
 
 #%% track maximumx
+wl_s = [620, 660]
 
 max_vals, wl_max, idxs, t_out = utilsPP.track_maxima_fulltimeline(
     wl_cut, t, map_cut_2,
-    wl_search=[520, 540],
+    wl_search=wl_s,
     t_start=1000,   # pick seed near t=100
     t_stop=60,   # t_stop earlier than t_start
     maxSteps=6
@@ -164,7 +167,7 @@ ax.set_ylabel("dTT (%)")
 # assuming wl, t, map_data are defined and track_maxima_fulltimeline is loaded:
 fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
     wl_cut, t, map_cut_2,
-    wl_search=[520, 540],
+    wl_search=wl_s,
     t_start=1000,   # pick seed near t=100
     t_stop=500,   # t_stop earlier than t_start
     maxSteps=6,
@@ -174,3 +177,76 @@ fig, ax, line, scat, cbar = utilsPP.plot_tracked_wavelength_vs_time(
 plt.show()
 
 #%% see fluence dependence
+
+def find_abs_max_dyn_multiple_files(path_folder, file_name_vector, wl_l, t_to_find_peak, t_bkg):
+    
+    for i in range(len(file_name_vector)):
+        
+        base_file = file_name_vector[i]
+        
+        # Load and stack
+        t, wl, stacked, files_used = utilsPP.load_and_stack_related_maps(path_folder, base_file)
+
+        # Cut
+        wl_cut, stacked_cut = utilsPP.cut_spectra_stacked(wl, stacked, wl_l)
+
+        # find the spikes
+        spike_mask, detected_indices, wl_idx = utilsPP.detect_spikes_stack_at_wl(stacked_cut, wl_cut, 530.0, window=11, thresh=15.0, min_distance=1)
+        
+        """
+        # plot overlay with spikes marked
+        fig2, ax2 = utilsPP.plot_spike_mask_overlay(t, wl_cut, stacked_cut, spike_mask, wl_choice=630)
+        """
+        
+        # clean the spikes
+        cleaned = utilsPP.replace_spikes_stack_with_median_spectrum(stacked_cut, spike_mask)        
+        
+        map_cut = utilsPP.mean_stack(cleaned)
+        
+        #bkg
+        map_cut = utilsPP.remove_bkg(t, map_cut, t_bkg)
+        
+        #Extract Spectrum and maximas
+        i_max, values_maximas, i_t_taken = utilsPP.find_abs_max_spectra(t, wl_cut, map_cut, t_to_find_peak)
+        
+        #Extract dyns
+        dyn = map_cut[i_max, :]
+        
+        if i == 0:
+            shape_res = (len(file_name_vector), dyn.shape[1])
+            dyn_max_mat = np.zeros(shape_res, dtype=np.float64)
+            i_taken_mat = np.zeros((len(file_name_vector), 1), dtype=np.float64)
+        
+        #append the results
+        dyn_max_mat[i, :] = dyn
+        i_taken_mat[i, :] = i_max
+        
+    return dyn_max_mat, i_taken_mat
+
+path_folder = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
+#file_name_vector = ["d25100909", "d25100913", "d25100913", "d25100913","d25100913"]
+file_seed = "d251009"
+file_nums = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24]
+file_name_vector = utilsPP.generate_string_list(file_seed, file_nums)
+powers = [2.35, 1.55, 4.0, 10, 16, 12, 4, 13.657, 8.0, 2.343, 1.072, 14.928, 6.0, 2.0, 0.4]
+
+file_name_vector, powers = utilsPP.sort_two_lists(file_name_vector, powers)
+
+t_bkg = -1000
+wl_l = [500, 740]
+t_to_find_peak = [2000]
+
+dyn_max_mat, i_taken_mat = find_abs_max_dyn_multiple_files(path_folder, file_name_vector, wl_l, t_to_find_peak, t_bkg)
+
+fig, ax = plt.subplots(figsize=(8, 3))
+
+for i in range(dyn_max_mat.shape[0]):
+    dyn = dyn_max_mat[i]
+    
+    y = dyn / max(abs(dyn))
+    
+    ax.plot(t, y, label=f"power = {powers[i]:.2f} uW")
+
+ax.set_xlabel("Delay (fs)")
+ax.set_ylabel("dTT (norm)")
+ax.legend()
