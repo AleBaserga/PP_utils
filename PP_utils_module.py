@@ -818,7 +818,7 @@ def plot_spectra(t, wl, map_mat, ts,
                 alpha=alpha)
 
     ax.set_xlabel("Wavelength (nm)")
-    ax.set_ylabel("dTT (%)")
+    ax.set_ylabel("ΔT/T (%)")
     ax.set_xlim([np.min(wl), np.max(wl)])
     if title is not None:
         ax.set_title(title)
@@ -845,7 +845,9 @@ def plot_dynamics(t, wl, map_mat, wls,
                   linewidth=1.5,
                   alpha=1.0,
                   legend=True,
-                  title=None):
+                  title=None,
+                  normalize = False,
+                  absoluteValues = False):
     """
     Plot dynamics (signal vs time) extracted at specified wavelengths.
 
@@ -908,6 +910,12 @@ def plot_dynamics(t, wl, map_mat, wls,
     for i in range(n_dyns):
         dynamic = dynamics[i, :]
         wl_c = wl[i_taken[i]]
+        
+        if absoluteValues:
+            dynamic = np.abs(dynamic)
+        if normalize:
+            dynamic = dynamic / np.max(dynamic)
+        
         ax.plot(t, dynamic,
                 label=f'{wl_c:.2f} nm',
                 color=colors[i],
@@ -916,7 +924,12 @@ def plot_dynamics(t, wl, map_mat, wls,
 
     # --- Labels and formatting ---
     ax.set_xlabel("Delay (fs)")
-    ax.set_ylabel("dTT (%)")
+    
+    if normalize:
+        ax.set_ylabel("ΔT/T (norm.)")
+    else:
+        ax.set_ylabel("ΔT/T (%)")
+        
     ax.set_xlim([np.min(t), np.max(t)])
     if title:
         ax.set_title(title)
@@ -973,7 +986,7 @@ def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto", show_colorbar=
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size=colorbar_size, pad=colorbar_pad)
         cb = fig.colorbar(c, cax=cax)
-        cb.set_label("dTT")
+        cb.set_label("ΔT/T")
     
     return fig, ax, c
 
@@ -1254,7 +1267,7 @@ def plot_dynamics_stack(t, wl, stacked, wl_choice, meas_indices=None, figsize=(8
                             color='gray', alpha=0.3, label='±1σ')
             
         ax.set_xlabel("Delay (fs)")
-        ax.set_ylabel("dTT (%)")
+        ax.set_ylabel("ΔT/T (%)")
         ax.set_title(f"Wavelength {wl[idx]:.2f} nm")
         ax.set_xlim([t.min(), t.max()])
         if n_plots == 1:
