@@ -12,6 +12,7 @@ import os
 from scipy.ndimage import uniform_filter
 import re
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from typing import Sequence, Optional, Tuple, List
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
@@ -25,6 +26,7 @@ def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
         
     return df
 
+        
 def unpack_df(dataframe, makePercentage=True):
     """
     TODO: fix this description
@@ -40,6 +42,7 @@ def unpack_df(dataframe, makePercentage=True):
         
     return t, wl, map_data
 
+        
 def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="\t",  makePercentage=True):
     """
     TODO: fix this description
@@ -55,6 +58,7 @@ def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="
     else:
         return t, wl, map_data
 
+            
 def find_related_files(base_dir: str, base_filename: str) -> list[str]:
     """
     Find all files in `base_dir` related to a given base file name.
@@ -74,6 +78,7 @@ def find_related_files(base_dir: str, base_filename: str) -> list[str]:
 
     return related
 
+        
 def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last = True, **load_kwargs) -> np.ndarray:
     """
     Load and stack all map_data arrays from files matching base_filename pattern.
@@ -120,6 +125,7 @@ def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last 
     stacked_maps = np.stack(maps, axis=0)
     return t, wl, stacked_maps, file_list
 
+        
 def mean_stack(stacked):
     """
     TODO: fix this description
@@ -127,6 +133,7 @@ def mean_stack(stacked):
     
     return np.mean(stacked, axis=0)
 
+        
 def generate_string_list(base: str, numbers: list[int]) -> list[str]:
     """
     Generate a list of strings formed by concatenating a base string
@@ -140,6 +147,7 @@ def generate_string_list(base: str, numbers: list[int]) -> list[str]:
     """
     return [f"{base}{num:02d}.dat" for num in numbers]
         
+        
 # Miscellaneous Useful Functions
 def find_in_vector(vect, value):
     """
@@ -149,10 +157,12 @@ def find_in_vector(vect, value):
     index = np.argmin(np.abs(vect-value))
     return index
 
+        
 def _find_nearest_index(vec, value):
     vec = np.asarray(vec)
     return int(np.argmin(np.abs(vec - value)))
 
+        
 def find_in_vector_multiple(vect, values):
     """
     TODO: fix this description
@@ -170,6 +180,7 @@ def find_in_vector_multiple(vect, values):
             
     return indexs
 
+        
 def find_abs_max(vect):
     """
     TODO: fix this description
@@ -179,6 +190,7 @@ def find_abs_max(vect):
     
     return i_max, vect[i_max]
 
+        
 def calculate_fluence(powers, f_r, diameter):
     """
     TODO: fix this description
@@ -193,6 +205,7 @@ def calculate_fluence(powers, f_r, diameter):
 
     return fluences
 
+        
 def sort_two_lists(list1, list2):
     """
     TODO: fix this description
@@ -226,6 +239,7 @@ def _make_exponential_kernel(length, decay):
     k /= k.sum()
     return k
 
+        
 def smooth_along_axis(arr, axis=-1, method="uniform", window=5, sigma=None, decay=None, mode="reflect"):
     """
     Smooth a 2D or 3D array along a chosen axis.
@@ -372,6 +386,7 @@ def smooth_along_axis(arr, axis=-1, method="uniform", window=5, sigma=None, deca
 
     return out
 
+        
 def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     """
     Smooth a 2D NumPy array along both dimensions using a uniform moving average.
@@ -402,6 +417,7 @@ def smooth_2d(array: np.ndarray, p: int, r: int) -> np.ndarray:
     smoothed = uniform_filter(array, size=size, mode="reflect")
     return smoothed
 
+        
 def _choose_rank_from_singulars(s, method="energy", energy=0.99, tol=1e-2):
     """
     Decide rank from singular values s (1D array, descending).
@@ -439,6 +455,7 @@ def _choose_rank_from_singulars(s, method="energy", energy=0.99, tol=1e-2):
 
     raise ValueError(f"Unknown rank selection method: {method}")
 
+        
 def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, return_uv=False):
     """
     SVD denoising (rank truncation) of a 2D matrix.
@@ -509,6 +526,7 @@ def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, retur
         return denoised, chosen_rank, s, U, Vh
     return denoised, chosen_rank, s
 
+        
 # Data extraction and manipulation
 
 def extract_spectra(t, map_matrix, values_to_extract):
@@ -518,6 +536,7 @@ def extract_spectra(t, map_matrix, values_to_extract):
     index_extract = find_in_vector_multiple(t, values_to_extract)
     return map_matrix[:, index_extract], index_extract
 
+        
 def extract_dyns(wl_array, map_matrix, values_to_extract):
     """
     TODO: fix this description
@@ -525,6 +544,7 @@ def extract_dyns(wl_array, map_matrix, values_to_extract):
     index_extract = find_in_vector_multiple(wl_array, values_to_extract)
     return map_matrix[index_extract, :], index_extract
 
+        
 def cut_spectra(wl, map_mat, wl_lims):
     """
     TODO: fix this description
@@ -539,6 +559,7 @@ def cut_spectra(wl, map_mat, wl_lims):
     
     return wl_cut, map_cut
 
+        
 def cut_spectra_stacked(wl, stacked, wl_lims):
     """
     TODO: fix this description
@@ -552,6 +573,7 @@ def cut_spectra_stacked(wl, stacked, wl_lims):
     
     return wl_cut, stacked_cut
 
+        
 def find_abs_max_spectra(t, wl, map_mat, t_find):
     """
     TODO: fix this description
@@ -569,6 +591,7 @@ def find_abs_max_spectra(t, wl, map_mat, t_find):
         
     return index_maximas, values_maximas, i_taken
 
+        
 def remove_bkg(t, map_local, t_bkg):
     """
     TODO: fix this description
@@ -584,6 +607,7 @@ def remove_bkg(t, map_local, t_bkg):
     
     return map_bkg_free
 
+        
 def track_maxima_fulltimeline(wl, t, map_data, wl_search, t_start, t_stop, maxSteps=np.inf):
     """
     Track maxima across the entire time vector using a seed at t_start.
@@ -711,55 +735,203 @@ def track_maxima_fulltimeline(wl, t, map_data, wl_search, t_start, t_stop, maxSt
 
 # Plotting functions 
 
-def plot_spectra(t, wl, map_mat, ts):
+def plot_spectra(t, wl, map_mat, ts,
+                 ax=None,
+                 clear=False,
+                 show=True,
+                 cmap_name='plasma',
+                 linewidth=1.5,
+                 alpha=1.0,
+                 legend=True,
+                 title=None):
     """
-    TODO: fix this description
+    Plot spectra extracted at times `ts` from a map (wl x t).
+
+    Parameters
+    ----------
+    t : 1D array (n_t,)
+        Time/delay axis.
+    wl : 1D array (n_wl,)
+        Wavelength axis.
+    map_mat : 2D array (n_wl, n_t)
+        Map containing spectra (rows = wavelength, columns = time).
+    ts : scalar or sequence
+        Times at which to extract spectra; passed to `extract_spectra`.
+    ax : matplotlib.axes.Axes or None
+        If provided, plotting will be done on this axis (overlay). If None a new figure/axis is created.
+    clear : bool
+        If True and `ax` provided, clear the axis before plotting.
+    show : bool
+        If True and a new figure is created, call plt.show(). If ax was provided and show=True,
+        plt.draw() will be called.
+    cmap_name : str
+        Name of colormap for generating distinct colors.
+    linewidth : float
+        Line width for plotted spectra.
+    alpha : float
+        Line transparency.
+    legend : bool
+        Whether to show legend.
+    title : str or None
+        Optional title for the axis.
+
+    Returns
+    -------
+    fig, ax
+        Matplotlib figure and axis handles used.
     """
-    
+
+    # ---- get spectra and indices ----
     spectra, i_taken = extract_spectra(t, map_mat, ts)
-    
-    colors = create_diverging_colormap(spectra.shape[1], 'plasma')
-    
-    fig, ax = plt.subplots(1, 1, figsize=(8,3))
-    
-    for i in range(spectra.shape[1]):
+    # spectra shape expected: (n_wl, n_spectra)
+    n_spectra = spectra.shape[1]
+
+    # ---- prepare axis ----
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 3))
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    if clear:
+        ax.cla()
+
+    # ---- colors ----
+    try:
+        colors = create_diverging_colormap(n_spectra, cmap_name)
+    except Exception:
+        # fallback: use matplotlib colormap
+        from matplotlib.cm import get_cmap
+        cmap = get_cmap(cmap_name)
+        colors = [cmap(i / max(1, n_spectra - 1)) for i in range(n_spectra)]
+
+    # ---- plot each spectrum ----
+    for i in range(n_spectra):
         spectrum = spectra[:, i]
-        t_c = t[i_taken[i]]
-        ax.plot(wl, spectrum, label = f' {t_c:.2f} ps', color = colors[i])
-        
+        # label using the matching time from t via i_taken
+        t_c = float(t[i_taken[i]])
+        ax.plot(wl, spectrum,
+                label=f'{t_c:.2f} ps',
+                color=colors[i],
+                linewidth=linewidth,
+                alpha=alpha)
+
     ax.set_xlabel("Wavelength (nm)")
     ax.set_ylabel("dTT (%)")
-    
-    ax.set_xlim([min(wl), max(wl)])
-    ax.legend()
-    
-    plt.show()
+    ax.set_xlim([np.min(wl), np.max(wl)])
+    if title is not None:
+        ax.set_title(title)
+
+    if legend:
+        ax.legend(fontsize='small')
+
+    # draw / show logic
+    if created_fig and show:
+        plt.tight_layout()
+        plt.show()
+    elif (not created_fig) and show:
+        # if user provided ax and asked to show, update canvas
+        fig.canvas.draw_idle()
+
     return fig, ax
 
-def plot_dynamics(t, wl, map_mat, wls):
+
+def plot_dynamics(t, wl, map_mat, wls,
+                  ax=None,
+                  clear=False,
+                  show=True,
+                  cmap_name='plasma',
+                  linewidth=1.5,
+                  alpha=1.0,
+                  legend=True,
+                  title=None):
     """
-    TODO: fix this description
+    Plot dynamics (signal vs time) extracted at specified wavelengths.
+
+    Parameters
+    ----------
+    t : 1D array (n_t,)
+        Time or delay axis.
+    wl : 1D array (n_wl,)
+        Wavelength axis.
+    map_mat : 2D array (n_wl, n_t)
+        Map of signal values (rows = wl, columns = time).
+    wls : scalar or sequence
+        Wavelength(s) at which to extract dynamics.
+    ax : matplotlib.axes.Axes or None
+        Axis on which to plot. If None, a new figure and axis are created.
+    clear : bool
+        Whether to clear the provided axis before plotting.
+    show : bool
+        Whether to immediately display the figure (plt.show()).
+    cmap_name : str
+        Colormap name for color generation.
+    linewidth : float
+        Line width.
+    alpha : float
+        Line transparency.
+    legend : bool
+        Whether to show a legend.
+    title : str or None
+        Optional title for the plot.
+
+    Returns
+    -------
+    fig, ax
+        The Matplotlib figure and axis handles.
     """
-    
+
+    # --- Extract dynamics ---
     dynamics, i_taken = extract_dyns(wl, map_mat, wls)
-    
-    colors = create_diverging_colormap(dynamics.shape[0], 'plasma')
-    
-    fig, ax = plt.subplots(1, 1, figsize=(8,3))
-    
-    for i in range(dynamics.shape[0]):
+    n_dyns = dynamics.shape[0]
+
+    # --- Handle axis creation ---
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 3))
+        created_fig = True
+    else:
+        fig = ax.figure
+        if clear:
+            ax.cla()
+
+    # --- Handle colormap ---
+    try:
+        colors = create_diverging_colormap(n_dyns, cmap_name)
+    except Exception:
+        from matplotlib.cm import get_cmap
+        cmap = get_cmap(cmap_name)
+        colors = [cmap(i / max(1, n_dyns - 1)) for i in range(n_dyns)]
+
+    # --- Plot each dynamic ---
+    for i in range(n_dyns):
         dynamic = dynamics[i, :]
         wl_c = wl[i_taken[i]]
-        ax.plot(t, dynamic, label = f' {wl_c:.2f} nm', color = colors[i])
-        
+        ax.plot(t, dynamic,
+                label=f'{wl_c:.2f} nm',
+                color=colors[i],
+                linewidth=linewidth,
+                alpha=alpha)
+
+    # --- Labels and formatting ---
     ax.set_xlabel("Delay (fs)")
     ax.set_ylabel("dTT (%)")
-    
-    ax.set_xlim([min(t), max(t)])
-    ax.legend()
-    
-    plt.show()
+    ax.set_xlim([np.min(t), np.max(t)])
+    if title:
+        ax.set_title(title)
+    if legend:
+        ax.legend(fontsize='small')
+
+    # --- Show logic ---
+    if created_fig and show:
+        plt.tight_layout()
+        plt.show()
+    elif (not created_fig) and show:
+        fig.canvas.draw_idle()
+
     return fig, ax
+
 
 def compute_clims_auto(matrix):
     """
@@ -769,6 +941,7 @@ def compute_clims_auto(matrix):
     vmin = -vmax
     return vmin, vmax
 
+        
 def plot_map(t, wl, map_mat, cmap_use = "PuOr_r", clims = "auto", show_colorbar=True):
     """
     TODO: fix this description
@@ -824,6 +997,7 @@ def create_diverging_colormap(n_colors: int, cmap_name: str = 'coolwarm'):
     cmap = plt.get_cmap(cmap_name)
     return [cmap(i / (n_colors - 1)) for i in range(n_colors)]
 
+        
 def plot_tracked_wavelength_vs_time(
     wl, t, map_data,
     wl_search, t_start, t_stop, maxSteps=np.inf,
@@ -922,6 +1096,7 @@ def plot_tracked_wavelength_vs_time(
     #plt.tight_layout()
     return fig, ax, tracked_line, tracked_scatter, cbar
 
+            
 def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"):
     """
     Plot a pump-probe 2D map with a linear x-axis on the left
@@ -1011,6 +1186,7 @@ def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"
     #plt.tight_layout()
     return fig, (ax_lin, ax_log), (c_lin, c_log)
 
+        
 def plot_dynamics_stack(t, wl, stacked, wl_choice, meas_indices=None, figsize=(8,3), cmap_name='plasma', show_mean_std=True):
     """
     Plot dynamics (t vs value) for ALL measurements at a chosen wavelength (or list of wavelengths).
@@ -1123,6 +1299,7 @@ def _rolling_median_1D(x, window):
             med[i] = np.median(seg)
         return med
 
+            
 def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
     """
     Detect spike-like outliers in a 1D signal.
@@ -1188,6 +1365,7 @@ def detect_spikes(signal, window=11, thresh=6.0, min_distance=1):
     else:
         return np.nonzero(mask)[0].astype(int)
 
+            
 def replace_spikes_with_interp(signal, spike_idx, extend=0):
     """
     Replace spike samples with linear interpolation from nearest good neighbors.
@@ -1239,6 +1417,7 @@ def replace_spikes_with_interp(signal, spike_idx, extend=0):
 
     return s_clean
 
+        
 def plot_spikes(signal, spike_idx, cleaned=None, ax=None, marker_kw=None, line_kw=None):
     """
     Plot original signal and mark detected spikes. Optionally overlay cleaned signal.
@@ -1282,6 +1461,7 @@ def plot_spikes(signal, spike_idx, cleaned=None, ax=None, marker_kw=None, line_k
     ax.legend()
     return ax
 
+        
 def detect_spikes_stack_at_wl(stacked, wl, wl_choice, window=11, thresh=6.0, min_distance=1):
     """
     Detect spikes in a stacked dataset (n_meas, n_wl, n_delays) by applying the 1D
@@ -1324,6 +1504,7 @@ def detect_spikes_stack_at_wl(stacked, wl, wl_choice, window=11, thresh=6.0, min
 
     return spike_mask, detected_indices, wl_idx
     
+        
 def detect_spikes_stack(stacked, wl_thresh=0.5, point_thresh=0.1, mode='absolute', min_count_same_time=1):
     """
     Detect spikes in stacked dataset using the rule:
@@ -1397,6 +1578,7 @@ def detect_spikes_stack(stacked, wl_thresh=0.5, point_thresh=0.1, mode='absolute
     }
     return spike_mask, info
 
+        
 def replace_spikes_stack_with_median_spectrum(stacked, spike_mask):
     """
     Replace full spectra at flagged (measurement, delay) positions by the median spectrum
@@ -1431,6 +1613,7 @@ def replace_spikes_stack_with_median_spectrum(stacked, spike_mask):
 
     return stacked
 
+        
 def plot_spike_mask_overlay(t, wl, stacked, spike_mask, wl_choice=None, meas_indices=None,
                             figsize=(8,4), alpha=0.5, cmap_name='viridis'):
     """
@@ -1518,6 +1701,7 @@ def find_abs_max_multiple_files(file_path_vector, wl_l, t_to_find):
         
     return index_maximas_mat, values_maximas_mat, i_taken_mat
 
+        
 # deprecated    
 def find_abs_max_dyn_multiple_files(file_path_vector, wl_l, t_to_find_peak):
     

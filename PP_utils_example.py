@@ -22,7 +22,7 @@ plt.close("all")
 path = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
 os.chdir(path)
 
-file_vect = "d25100913_average"
+file_vect = "d25100924_average"
 loadPath = file_vect + ".dat"
 
 
@@ -39,7 +39,7 @@ map_data = data_s[2]
 
 #%% load a famiy of files
 base_dir = r"C:\Users\aless\OneDrive - Politecnico di Milano\PhD_backup\Experiments\NonLinear_PP\Data\AleMatteo Stratus Long\d251009\PM6"
-base_file = "d25100913.dat"
+base_file = "d25100924.dat"
 
 # Find all related files
 related = utilsPP.find_related_files(base_dir, base_file)
@@ -114,7 +114,7 @@ fig, ax = utilsPP.plot_spectra(t, wl_cut, map_cut_2, delays_to_plot)
 fig, ax = data_bkg_free.plot_spectra_class(delays_to_plot)
 
 # plot dynamics
-wls_to_plot = [510, 530, 580]
+wls_to_plot = [580, 635]
 fig, ax = utilsPP.plot_dynamics(t, wl_cut, map_cut_2, wls_to_plot)
 fig, ax = data_bkg_free.plot_dynamics_class(wls_to_plot)
 
