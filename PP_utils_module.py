@@ -12,7 +12,7 @@ import os
 from scipy.ndimage import uniform_filter
 import re
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from typing import Sequence, Optional, Tuple, List
+from typing import Sequence, Optional, Tuple, List, Iterable
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
@@ -216,6 +216,106 @@ def sort_two_lists(list1, list2):
     list2_sorted = list(list2_sorted)
     
     return list1_sorted, list2_sorted
+
+
+def shift_x_to_y_half(x, y, which='first', tol=0.0):
+    """
+    Shift x so that the position where y == 0.5 becomes x == 0.
+
+    Parameters
+    ----------
+    x : array-like, shape (n,)
+        x coordinates (not required to be equally spaced).
+    y : array-like, shape (n,)
+        y values corresponding to x.
+    which : {'first', 'last'}, optional
+        If more than one crossing exists, choose the 'first' (left-most) or 'last' (right-most).
+        Default 'first'.
+    tol : float, optional
+        Tolerance used when considering a sample equal to 0.5 (default 0.0). Useful for numerical noise.
+
+    Returns
+    -------
+    x_shifted : np.ndarray, shape (n,)
+        The input x translated so that the x corresponding to y==0.5 is 0.
+    x0 : float
+        The interpolated x position where y == 0.5 (before shifting).
+    used_idx : tuple (i, i+1) or (i, )
+        Indices used to compute the crossing. If exact match, returns (i,). If interpolated between samples i and i+1, returns (i, i+1).
+
+    Raises
+    ------
+    ValueError
+        If no crossing / point with y==0.5 is found.
+
+    Notes
+    -----
+    Uses linear interpolation between the two samples surrounding the crossing.
+    """
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError("x and y must be 1D arrays")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("x and y must have the same length")
+
+    n = x.shape[0]
+    target = 0.5
+
+    # handle exact matches (within tol)
+    exact_mask = np.isfinite(y) & (np.abs(y - target) <= tol)
+    exact_idxs = np.nonzero(exact_mask)[0]
+    if exact_idxs.size > 0:
+        if which == 'first':
+            i = int(exact_idxs[0])
+        else:
+            i = int(exact_idxs[-1])
+        x0 = x[i]
+        used_idx = (i,)
+        return x - x0, float(x0), used_idx
+
+    # build sign of (y - target), ignoring NaNs
+    diff = y - target
+    finite = np.isfinite(diff)
+    sign = np.sign(diff)
+    # where sign changes between consecutive finite points -> crossing
+    crossings = []
+    # find indices i where pair (i,i+1) crosses target
+    for i in range(n - 1):
+        if not (finite[i] and finite[i+1]):
+            continue
+        # if signs are opposite or one is zero (handled above) -> crossing in interval
+        if sign[i] == 0 or sign[i+1] == 0:
+            # already caught exact matches earlier, skip
+            continue
+        if sign[i] * sign[i+1] < 0:
+            crossings.append(i)
+
+    if len(crossings) == 0:
+        raise ValueError("No crossing of y==0.5 found in the data.")
+
+    if which == 'first':
+        i = int(crossings[0])
+    else:
+        i = int(crossings[-1])
+
+    # linear interpolation between (x[i], y[i]) and (x[i+1], y[i+1])
+    x_i, x_ip1 = x[i], x[i+1]
+    y_i, y_ip1 = y[i], y[i+1]
+
+    # Guard against equal y values (shouldn't happen because we checked sign change)
+    if y_ip1 == y_i:
+        # fallback: pick midpoint x
+        x0 = 0.5 * (x_i + x_ip1)
+    else:
+        t = (target - y_i) / (y_ip1 - y_i)  # fraction between i and i+1
+        x0 = x_i + t * (x_ip1 - x_i)
+
+    used_idx = (i, i+1)
+    return x - float(x0), float(x0), used_idx
+
 
 # Denoising 
 
@@ -525,6 +625,334 @@ def svd_denoise(matrix, rank=None, method="energy", energy=0.99, tol=1e-2, retur
     if return_uv:
         return denoised, chosen_rank, s, U, Vh
     return denoised, chosen_rank, s
+
+# Dechirping (not yet tried)
+from scipy.interpolate import UnivariateSpline, interp1d
+from scipy.signal import correlate
+
+def _try_unpack(dataFrame_scans):
+    """
+    Accept either a tuple (t, wl, scans) or a custom dataFrame that needs a
+    user-provided 'dataCleaner_unpack' function. If the latter is present in the
+    global namespace it will be called.
+    """
+    if isinstance(dataFrame_scans, (tuple, list)) and len(dataFrame_scans) == 3:
+        return dataFrame_scans
+    # allow user to provide a dataCleaner_unpack in the module where they call this
+    if 'dataCleaner_unpack' in globals():
+        return globals()['dataCleaner_unpack'](dataFrame_scans)
+    raise ValueError("dataFrame_scans must be (t, wl, scans) or provide dataCleaner_unpack()")
+
+def _nearest_int_index(arr, val):
+    return int(np.argmin(np.abs(arr - val)))
+
+def _smooth_vector(v, window=5):
+    # simple symmetric moving median smoothing for robustness
+    from scipy.ndimage import median_filter
+    return median_filter(v, size=max(1, int(window)))
+
+def _auto_chirp_derivative(avg_map, t, wl, smooth_win=5, center_ref=None):
+    """
+    Estimate chirp by locating maximum absolute temporal derivative per wavelength.
+    Returns ch (time-shifts for each wl).
+    """
+    # avg_map shape: (n_wl, n_t)
+    n_wl, n_t = avg_map.shape
+    dt = np.diff(t)
+    if not np.allclose(dt, dt[0]):
+        # If non-uniform time axis, compute derivative with np.gradient
+        deriv = np.abs(np.gradient(avg_map, t, axis=1))
+    else:
+        deriv = np.abs(np.diff(avg_map, axis=1)) / dt[0]
+        # pad to same shape
+        deriv = np.pad(deriv, ((0,0),(0,1)), mode='edge')
+
+    # For each wl find index of max derivative
+    idx_max = np.argmax(deriv, axis=1)
+
+    # Convert indices to times
+    ch_times = t[idx_max]
+
+    # Optionally choose a reference: central wl or provided
+    if center_ref is None:
+        # subtract median so that chirp is relative to median time
+        ch_times = ch_times - np.median(ch_times)
+    else:
+        ch_times = ch_times - center_ref
+
+    # Smooth chirp (avoid large local jumps)
+    ch_times = _smooth_vector(ch_times, window=max(1, smooth_win))
+
+    # Return time offsets: here we return absolute map shifts (ch_times)
+    return ch_times
+
+def _auto_chirp_xcorr(avg_map, t, wl, max_lag_fraction=0.2, upsample=1, reference_wl_index=None, smooth_win=5):
+    """
+    Estimate chirp by cross-correlation: for each wavelength row correlate with
+    a reference row and find lag of maximum correlation. The lag (in samples)
+    is converted to time shift and returned.
+    """
+    n_wl, n_t = avg_map.shape
+    dt = t[1] - t[0] if n_t>1 else 1.0
+    if reference_wl_index is None:
+        reference_wl_index = n_wl // 2
+
+    ref = avg_map[reference_wl_index].astype(float)
+    # optionally normalize to zero mean
+    ref = (ref - np.nanmean(ref))
+    ch = np.zeros(n_wl, dtype=float)
+
+    max_lag = int(np.ceil(max_lag_fraction * n_t))
+
+    for i in range(n_wl):
+        row = avg_map[i].astype(float)
+        row = (row - np.nanmean(row))
+        # compute cross-correlation (full)
+        corr = correlate(row, ref, mode='full')
+        lags = np.arange(- (len(row) - 1), len(ref))
+        # restrict search around zero
+        center = np.argmin(np.abs(lags))
+        i_min = max(0, center - max_lag)
+        i_max = min(len(corr), center + max_lag + 1)
+        sub_corr = corr[i_min:i_max]
+        sub_lags = lags[i_min:i_max]
+        # find peak
+        peak_idx = np.argmax(sub_corr)
+        lag = sub_lags[peak_idx]
+        ch[i] = -lag * dt  # negative lag: row needs to be shifted by -lag*dt to align to ref
+
+    # subtract median so that shifts are relative
+    ch = ch - np.median(ch)
+    ch = _smooth_vector(ch, window=max(1, smooth_win))
+    return ch
+
+def dataCleaner_dechirp_v3_py(
+    dataFrame_scans,
+    graphic_mode: bool = True,
+    iterative_mode: bool = False,
+    index_t_min: Optional[int] = None,
+    index_t_max: Optional[int] = None,
+    correction_factor: Optional[Iterable[float]] = None,
+    cmap: str = "viridis",
+    auto_mode: str = "derivative",   # 'derivative' or 'xcorr' or 'manual'
+    auto_params: Optional[dict] = None,
+    spline_smoothing: float = 0.0,   # smoothing factor for UnivariateSpline (0 -> interpolating)
+    show_plots: bool = True
+) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+    """
+    Python version of dataCleaner_dechirp_v3 with interactive/manual and automatic modes.
+
+    Parameters
+    ----------
+    dataFrame_scans : (t, wl, scans) or custom object unpackable by dataCleaner_unpack()
+        t : 1D array (n_t,)
+        wl : 1D array (n_wl,)
+        scans : 3D array (n_wl, n_t, n_scans) OR (n_t, n_wl, n_scans) — shapes are auto-detected.
+    graphic_mode : bool
+        If True, interactive clicking is used (ginput). If False and not manual, the automatic method is used.
+    iterative_mode : bool
+        If True, repeat interactive selection until user confirms.
+    index_t_min / index_t_max : optional ints
+        Range in t indices to display when clicking (1-based indices like MATLAB).
+    correction_factor : 2-tuple for vmin/vmax scaling like in your MATLAB code.
+    cmap : colormap for plotting.
+    auto_mode : 'derivative'|'xcorr'|'manual' — which automatic strategy to use if not graphic_mode.
+    auto_params : dict of parameters for automatic mode (e.g. {'smooth_win':5, 'max_lag_fraction':0.2})
+    spline_smoothing : float smoothing factor for UnivariateSpline (s parameter)
+    show_plots : whether to show the various figures (False useful in headless runs).
+
+    Returns
+    -------
+    dechirped_dataFrame_avg : (t_extended, wl, dechirped_pp_avg)   # (same form as pack)
+    chirp_data : ndarray shape (n_wl+1, n_t+1) (first row t, first column wl, body old_pp_avg)
+    """
+
+    # Unpack inputs
+    t, wl, scans = _try_unpack(dataFrame_scans)
+
+    # Normalize shapes: we expect scans shape (n_wl, n_t, n_scans)
+    scans = np.asarray(scans)
+    if scans.ndim != 3:
+        raise ValueError("scans must be 3D (n_wl, n_t, n_scans) or convertible to that shape")
+
+    # Detect orientation: if shape is (n_t, n_wl, n_scans) swap axes
+    n0, n1, n2 = scans.shape
+    n_wl, n_t = len(wl), len(t)
+    if (n0 == n_t and n1 == n_wl):
+        scans = np.transpose(scans, (1, 0, 2))
+
+    # average across scans
+    old_pp_avg = np.nanmean(scans, axis=2)   # shape (n_wl, n_t)
+
+    # set defaults
+    if index_t_min is None:
+        index_t_min = 0
+    else:
+        index_t_min = max(0, int(index_t_min) - 1)  # convert MATLAB 1-based to 0-based
+
+    if index_t_max is None:
+        index_t_max = n_t - 1
+    else:
+        index_t_max = min(n_t - 1, int(index_t_max) - 1)
+
+    if correction_factor is None:
+        correction_factor = (1.0, 1.0)
+
+    if auto_params is None:
+        auto_params = {}
+
+    noexit_confirmed = True
+    ch = None
+
+    # interactive or automatic chirp selection loop
+    while noexit_confirmed:
+        if graphic_mode and auto_mode == "manual":
+            # present the average map and let user click points
+            fig, ax = plt.subplots(figsize=(8, 4))
+            im = ax.pcolormesh(t[index_t_min:index_t_max+1],
+                               wl,
+                               old_pp_avg[:, index_t_min:index_t_max+1],
+                               shading='auto', cmap=cmap)
+            ax.set_xlabel("Delay")
+            ax.set_ylabel("Wavelength")
+            plt.colorbar(im, ax=ax)
+            ax.set_title("Click points along the chirp (close window when done)")
+            if show_plots:
+                plt.show(block=False)
+            print("Click points along the chirp line (press Enter or close the figure when done)...")
+            pts = plt.ginput(n=-1, timeout=0)  # list of (x,y)
+            if len(pts) < 2:
+                raise RuntimeError("Need at least two points for chirp estimation")
+            xs = np.array([p[0] for p in pts])
+            ys = np.array([p[1] for p in pts])
+            # Fit spline of x(t) as function of wl: x = f(wl)
+            # we will create ch(wl_i) = f(wl_i)
+            spline = UnivariateSpline(ys, xs, s=spline_smoothing)
+            ch = spline(wl)
+        elif graphic_mode and auto_mode in ('derivative', 'xcorr'):
+            # Show map then run automatic method but allow user to inspect
+            fig, ax = plt.subplots(figsize=(8, 4))
+            im = ax.pcolormesh(t[index_t_min:index_t_max+1],
+                               wl,
+                               old_pp_avg[:, index_t_min:index_t_max+1],
+                               shading='auto', cmap=cmap)
+            plt.colorbar(im, ax=ax)
+            ax.set_xlabel("Delay")
+            ax.set_ylabel("Wavelength")
+            ax.set_title(f"Automatic chirp estimate: {auto_mode}")
+            if show_plots:
+                plt.show(block=False)
+
+            if auto_mode == "derivative":
+                ch = _auto_chirp_derivative(old_pp_avg, t, wl,
+                                            smooth_win=auto_params.get('smooth_win', 5),
+                                            center_ref=auto_params.get('center_ref', None))
+            else:
+                ch = _auto_chirp_xcorr(old_pp_avg, t, wl,
+                                       max_lag_fraction=auto_params.get('max_lag_fraction', 0.2),
+                                       smooth_win=auto_params.get('smooth_win', 5))
+
+            # overlay chirp
+            ax.plot(ch, wl, 'k--', lw=1.5)
+            if show_plots:
+                plt.draw()
+        else:
+            # Non-graphical automatic selection (or graphic_mode=False)
+            if auto_mode == 'manual':
+                raise ValueError("graphic_mode must be True for manual mode")
+            if auto_mode == 'derivative':
+                ch = _auto_chirp_derivative(old_pp_avg, t, wl, smooth_win=auto_params.get('smooth_win', 5))
+            else:
+                ch = _auto_chirp_xcorr(old_pp_avg, t, wl, max_lag_fraction=auto_params.get('max_lag_fraction', 0.2),
+                                       smooth_win=auto_params.get('smooth_win', 5))
+
+        # Show an estimated chirp over the map for inspection
+        fig2, ax2 = plt.subplots(figsize=(8, 4))
+        im2 = ax2.pcolormesh(t[index_t_min:index_t_max+1],
+                             wl,
+                             old_pp_avg[:, index_t_min:index_t_max+1],
+                             shading='auto', cmap=cmap)
+        plt.colorbar(im2, ax=ax2)
+        ax2.plot(ch, wl, 'k--', lw=1.5)
+        ax2.set_xlabel("Delay")
+        ax2.set_ylabel("Wavelength")
+        ax2.set_title("Estimated chirp (inspect)")
+        if show_plots:
+            plt.show(block=False)
+
+        if iterative_mode:
+            userkey = input(' Press Enter to confirm or any other key+Enter to repeat selection: ')
+            if userkey == '':
+                noexit_confirmed = False
+            else:
+                noexit_confirmed = True
+        else:
+            noexit_confirmed = False
+
+    # At this point ch is a vector of length n_wl giving time offsets (in same units as t)
+    ch = np.asarray(ch, dtype=float).flatten()
+    if ch.shape[0] != len(wl):
+        # try to interpolate or resample ch to match wl
+        ch = np.interp(wl, np.linspace(wl.min(), wl.max(), num=ch.shape[0]), ch)
+
+    # Build extended time vector similar to MATLAB code
+    step_t = t[1] - t[0] if len(t) > 1 else 1.0
+    needed_points = int(np.ceil((np.nanmax(ch) - np.nanmin(ch)) / step_t)) if np.isfinite(ch).all() else 0
+    needed_points = max(0, needed_points)
+
+    # Original shape
+    old_dim = old_pp_avg.shape  # (n_wl, n_t)
+    new_n_t = n_t + needed_points
+
+    # extended arrays: fill leading columns with NaN
+    extendend_old_pp_avg = np.full((old_dim[0], new_n_t), np.nan, dtype=float)
+    extendend_old_pp_avg[:, needed_points:needed_points + n_t] = old_pp_avg
+
+    # extended time
+    extendend_t = np.zeros(new_n_t, dtype=float)
+    # fictitious times before t[0]
+    ficticius_t_vect = ( -np.arange(needed_points, 0, -1) ) * step_t + t[0]
+    extendend_t[:needed_points] = ficticius_t_vect
+    extendend_t[needed_points:] = t
+
+    # Now dechirp: for each wavelength row k, sample extendend_old_pp_avg[k] at times extendend_t + ch[k]
+    dechirped_pp_avg = np.full_like(extendend_old_pp_avg, np.nan, dtype=float)
+    for k in range(old_dim[0]):
+        yrow = extendend_old_pp_avg[k, :]
+        # use only finite samples as nodes for interpolation
+        finite_mask = np.isfinite(yrow)
+        if np.sum(finite_mask) < 2:
+            # cannot interpolate, keep NaNs
+            continue
+        x_valid = extendend_t[finite_mask]
+        y_valid = yrow[finite_mask]
+        f = interp1d(x_valid, y_valid, kind='linear', bounds_error=False, fill_value=np.nan)
+        target_times = extendend_t + ch[k]
+        dechirped_pp_avg[k, :] = f(target_times)
+
+    # Plot dechirped average for inspection
+    fig3, ax3 = plt.subplots(figsize=(8, 4))
+    im3 = ax3.pcolormesh(t[index_t_min:index_t_max+1],
+                         wl,
+                         dechirped_pp_avg[:, index_t_min:index_t_max+1],
+                         shading='auto', cmap=cmap)
+    plt.colorbar(im3, ax=ax3)
+    ax3.set_title("Corrected chirp (dechirped)")
+    ax3.set_xlabel("Delay")
+    ax3.set_ylabel("Wavelength")
+    if show_plots:
+        plt.show()
+
+    # pack outputs
+    dechirped_dataFrame_avg = (extendend_t, wl, dechirped_pp_avg)
+
+    # chirp_data matrix in MATLAB like format
+    chirp_data = np.zeros((len(wl)+1, len(t)+1), dtype=float)
+    chirp_data[0, 1:] = t
+    chirp_data[1:, 0] = wl
+    chirp_data[1:, 1:] = old_pp_avg
+
+    return dechirped_dataFrame_avg, chirp_data
 
         
 # Data extraction and manipulation
