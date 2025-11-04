@@ -43,12 +43,12 @@ def unpack_df(dataframe, makePercentage=True):
     return t, wl, map_data
 
         
-def load_dat(loadPath, asClass= True,transpose_dataset=False, decimal=".", sep="\t",  makePercentage=True):
+def load_dat(loadPath, asClass= True, transpose_dataset=False, decimal=".", sep=r'\s+|\t+',  makePercentage=True):
     """
     TODO: fix this description
     """
     
-    df = load_as_df(loadPath, transpose_dataset = True, decimal=",")
+    df = load_as_df(loadPath, transpose_dataset = transpose_dataset, decimal=decimal)
 
     # Unpack Dataframe
     t, wl, map_data = unpack_df(df, makePercentage)
@@ -79,7 +79,7 @@ def find_related_files(base_dir: str, base_filename: str) -> list[str]:
     return related
 
         
-def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last = True, **load_kwargs) -> np.ndarray:
+def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last = True, transpose_dataset=False, decimal=".", sep="\t",  makePercentage=True, **load_kwargs) -> np.ndarray:
     """
     Load and stack all map_data arrays from files matching base_filename pattern.
 
@@ -111,7 +111,7 @@ def load_and_stack_related_maps(base_dir: str, base_filename: str, discard_last 
     file_list = []
     for fname in related_files:
         path = os.path.join(base_dir, fname)
-        data = load_dat(path, asClass= False)
+        data = load_dat(path, asClass= False, transpose_dataset = transpose_dataset, decimal = decimal, sep = sep, makePercentage = makePercentage)
         
         if isinstance(data, tuple):
             t, wl, map_data = data
@@ -1179,7 +1179,7 @@ def plot_map_linear_log(t, wl, map_mat, t_split, cmap_use="PuOr_r", clims="auto"
 
     # Add colorbar shared between both
     cbar = fig.colorbar(c_lin, ax=[ax_lin, ax_log], orientation="vertical", fraction=0.02, pad=0.04)
-    cbar.set_label("ΔT/T")
+    cbar.set_label("ΔT/T (%)")
 
     # Visual tweaks
     ax_lin.spines["right"].set_visible(False)
