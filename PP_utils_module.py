@@ -1240,7 +1240,7 @@ def plot_spectra(t, wl, map_mat, ts,
         # label using the matching time from t via i_taken
         t_c = float(t[i_taken[i]])
         ax.plot(wl, spectrum,
-                label=f'{t_c:.2f} ps',
+                label=f'{t_c:.2f} fs',
                 color=colors[i],
                 linewidth=linewidth,
                 alpha=alpha)
