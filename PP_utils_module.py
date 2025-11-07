@@ -316,6 +316,33 @@ def shift_x_to_y_half(x, y, which='first', tol=0.0):
     used_idx = (i, i+1)
     return x - float(x0), float(x0), used_idx
 
+def dtt_to_mOD(data, reverse=False):
+    """
+    Convert ΔT/T <-> mOD (milli-Optical Density).
+
+    Parameters
+    ----------
+    data : float, list, or np.ndarray
+        The input signal values. Can be ΔT/T or mOD.
+    reverse : bool (default False)
+        If False: convert ΔT/T -> mOD
+        If True:  convert mOD -> ΔT/T
+
+    Returns
+    -------
+    result : np.ndarray
+        Converted values (same shape as input).
+    """
+    data = np.asarray(data, dtype=float)
+
+    if not reverse:
+        # ΔT/T -> mOD
+        result = -1000 * np.log10(1 + data)
+    else:
+        # mOD -> ΔT/T
+        result = (10 ** (-data / 1000)) - 1
+
+    return result
 
 # Denoising 
 
