@@ -27,12 +27,12 @@ loadPath = file_vect + ".dat"
 
 
 # Let's use load the data as a class
-data = utilsPP.load_dat(loadPath, asClass= True)
+data = utilsPP.load_dat(loadPath, asClass= True, decimal=",", transpose_dataset=True)
 print(data)
 
 
 # Or let's load it as single files
-data_s = utilsPP.load_dat(loadPath, asClass= False)
+data_s = utilsPP.load_dat(loadPath, asClass= False, decimal=",", transpose_dataset=True)
 t = data_s[0]
 wl = data_s[1]
 map_data = data_s[2]
@@ -46,7 +46,7 @@ related = utilsPP.find_related_files(base_dir, base_file)
 print("Related files:", related)
 
 # Load and stack
-t, wl, stacked, files_used = utilsPP.load_and_stack_related_maps(base_dir, base_file)
+t, wl, stacked, files_used = utilsPP.load_and_stack_related_maps(base_dir, base_file, decimal=",", transpose_dataset=True)
 print("Stacked shape:", stacked.shape)
 
 # Cut

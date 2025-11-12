@@ -12,7 +12,7 @@ import os
 from scipy.ndimage import uniform_filter
 import re
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from typing import Sequence, Optional, Tuple, List, Iterable
+from typing import Sequence, Optional, Tuple, List, Iterable, Dict
 
 # Loading functions
 def load_as_df(loadPath, transpose_dataset=False, decimal=".", sep="\t"):
@@ -1465,6 +1465,33 @@ def create_diverging_colormap(n_colors: int, cmap_name: str = 'coolwarm'):
     cmap = plt.get_cmap(cmap_name)
     return [cmap(i / (n_colors - 1)) for i in range(n_colors)]
 
+
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+
+def make_zero_centered_colormap(vmin, vmax,
+                                neg_color="#2166ac",   # a nice blue
+                                zero_color="#ffffff",  # white
+                                pos_color="#b2182b"):  # a decent red
+    """
+    Create a colormap where vmin<0<0<vmax and 0 is mapped to white.
+    The negative side fades to neg_color and the positive to pos_color.
+
+    Returns:
+        cmap : matplotlib colormap
+        norm : TwoSlopeNorm that maps vmin→neg_color, 0→white, vmax→pos_color
+    """
+    if vmin >= 0 or vmax <= 0:
+        raise ValueError("We both know this only makes sense when vmin < 0 < vmax.")
+
+    # Construct a 3-point colormap
+    colors = [neg_color, zero_color, pos_color]
+    cmap = LinearSegmentedColormap.from_list("custom_zero_centered", colors, N=256)
+
+    # Norm that *forces* zero to be the center
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+
+    return cmap, norm
+
         
 def plot_tracked_wavelength_vs_time(
     wl, t, map_data,
@@ -2215,6 +2242,193 @@ def find_abs_max_dyn_multiple_files(file_path_vector, wl_l, t_to_find_peak):
         i_taken_mat[i, :] = i_max
         
     return dyn_max_mat, i_taken_mat
+
+# fitting
+
+from scipy.optimize import curve_fit
+from scipy.special import erf
+
+# ---------------- single-term building block ----------------
+def _exp_term(A, tau, sigma, t0, t):
+    # vectorized stable evaluation of the specialized exponential term
+    A = np.asarray(A, dtype=float)
+    tau = np.asarray(tau, dtype=float)
+    sigma = np.asarray(sigma, dtype=float)
+    t0 = np.asarray(t0, dtype=float)
+    t = np.asarray(t, dtype=float)
+
+    # avoid divide-by-zero catastrophes (very small positive lower bounds)
+    tau = np.maximum(tau, 1e-12)
+    sigma = np.maximum(sigma, 1e-12)
+
+    arg1 = -(t - t0 - 0.5 * sigma**2 / tau) / tau
+    arg2 = (t - t0 - sigma**2 / tau) / (np.sqrt(2) * sigma)
+    return 0.5 * A * np.exp(arg1) * (1.0 + erf(arg2))
+
+
+# ---------------- generic N-term model constructor ----------------
+def make_model_n(n_terms: int):
+    """
+    Return a callable model(t, *params) for n_terms exponentials,
+    with parameter ordering:
+      [A1, tau1, A2, tau2, ..., A_n, tau_n, sigma, t0]
+    total params = 2*n_terms + 2
+    """
+    if not (1 <= n_terms <= 5):
+        raise ValueError("n_terms must be between 1 and 5 inclusive")
+
+    def model(t, *params):
+        params = np.asarray(params, dtype=float)
+        expected_len = 2 * n_terms + 2
+        if params.size != expected_len:
+            raise ValueError(f"Expected {expected_len} params, got {params.size}")
+        # unpack
+        As = params[0:2*n_terms:2]
+        Taus = params[1:2*n_terms:2]
+        sigma = params[-2]
+        t0 = params[-1]
+
+        out = np.zeros_like(np.asarray(t, dtype=float))
+        for A, tau in zip(As, Taus):
+            out = out + _exp_term(A, tau, sigma, t0, t)
+        return out
+
+    return model
+
+
+# ---------------- main fitter ----------------
+def fit_exp_model_n(
+    x: np.ndarray,
+    y: np.ndarray,
+    n_terms: int = 2,
+    p0: Optional[np.ndarray] = None,
+    bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+    plot: bool = True,
+    show_residuals: bool = True,
+    verbose: bool = False,
+    maxfev: int = 20000
+) -> Dict:
+    """
+    Fit n_terms (1..5) specialized exponential terms to (x,y).
+
+    Parameters
+    ----------
+    x, y : 1D arrays
+    n_terms : int (1..5)
+      Number of exponential terms to fit.
+    p0 : initial guess for parameters (optional)
+      Order: [A1, tau1, A2, tau2, ..., A_n, tau_n, sigma, t0]
+    bounds : tuple(low, high) for curve_fit (optional)
+    plot : show data+fit
+    show_residuals : plot residual panel
+    verbose : print debug
+    maxfev : maximum function evaluations for curve_fit
+
+    Returns
+    -------
+    dict with keys:
+      popt, perr, model (callable), yfit, chi2, cov
+    """
+
+    x = np.asarray(x, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+    if x.shape != y.shape:
+        raise ValueError("x and y must have same shape")
+
+    if not (1 <= n_terms <= 5):
+        raise ValueError("n_terms must be in [1,5]")
+
+    model = make_model_n(n_terms)
+    npar = 2 * n_terms + 2
+
+    # sensible default initial guess
+    if p0 is None:
+        amplitude = (np.nanmax(y) - np.nanmin(y)) if np.isfinite(y).any() else 1.0
+        A_guess = y[np.nanargmax(np.abs(y))] if np.isfinite(y).any() else amplitude
+        # split amplitudes roughly among terms
+        As = []
+        Taus = []
+        total_span = max(1e-6, (x.max() - x.min()))
+        for k in range(n_terms):
+            # put shorter taus for early terms and longer for later terms
+            tau_guess = max(total_span * (0.1 + 0.2 * k), 1e-6)
+            Taus.append(tau_guess)
+            As.append(A_guess / float(max(1, n_terms)) )
+
+        sigma_guess = max(total_span / 20.0, 1e-6)
+        t0_guess = float(x[np.nanargmax(np.abs(y))])
+        p0 = np.hstack([np.array([val for pair in zip(As, Taus) for val in pair]), sigma_guess, t0_guess])
+
+    p0 = np.asarray(p0, dtype=float).ravel()
+    if p0.size != npar:
+        raise ValueError(f"Initial guess p0 must have length {npar} (got {p0.size})")
+
+    # default bounds: require taus>0 and sigma>0, allow amplitudes negative/positive
+    if bounds is None:
+        inf = np.inf
+        lower = []
+        upper = []
+        for k in range(n_terms):
+            lower += [-inf, 1e-12]   # A_k in (-inf,inf), tau_k > 0
+            upper += [inf, inf]
+        lower += [1e-12, x.min() - abs(x.ptp())]  # sigma>0, t0 allowed in a wider range
+        upper += [inf, x.max() + abs(x.ptp())]
+        bounds = (np.array(lower, dtype=float), np.array(upper, dtype=float))
+    else:
+        # ensure proper shapes
+        low, high = bounds
+        if len(low) != npar or len(high) != npar:
+            raise ValueError(f"bounds must be length {npar} each")
+
+    # run fit
+    try:
+        popt, pcov = curve_fit(model, x, y, p0=p0, bounds=bounds, maxfev=maxfev)
+        perr = np.sqrt(np.abs(np.diag(pcov))) if pcov is not None else np.full_like(popt, np.inf)
+    except Exception as e:
+        if verbose:
+            print("Fit failed:", e)
+        return {'popt': None, 'perr': None, 'model': model, 'yfit': None, 'chi2': None, 'cov': None, 'error': str(e)}
+
+    yfit = model(x, *popt)
+    resid = y - yfit
+    chi2 = np.nansum(resid**2)
+
+    if verbose:
+        print("popt:", popt)
+        print("perr:", perr)
+        print("chi2:", chi2)
+
+    result = {'popt': popt, 'perr': perr, 'model': model, 'yfit': yfit, 'chi2': chi2, 'cov': pcov}
+
+    # plotting
+    if plot:
+        fig = plt.figure(figsize=(8, 5))
+        if show_residuals:
+            gs = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.12)
+            ax = fig.add_subplot(gs[0])
+            axr = fig.add_subplot(gs[1], sharex=ax)
+        else:
+            ax = fig.add_subplot(111)
+            axr = None
+
+        ax.plot(x, y, 'k.', label='data', markersize=5)
+        xx = np.linspace(x.min(), x.max(), 1000)
+        yy = model(xx, *popt)
+        ax.plot(xx, yy, '-', color='C1', lw=2, label=f'fit ({n_terms} terms)')
+        ax.set_ylabel("y")
+        ax.legend(fontsize='small')
+
+        if axr is not None:
+            axr.plot(x, resid, 'o', ms=4)
+            axr.axhline(0, color='k', lw=0.7)
+            axr.set_xlabel("x")
+            axr.set_ylabel("resid")
+
+        plt.tight_layout()
+        plt.show()
+
+    return result
+
 
 #%% let's try to use a call of PP data
 
